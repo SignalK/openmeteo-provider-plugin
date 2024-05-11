@@ -19,29 +19,24 @@ const DEFAULT_FORECAST_DAYS = 1
 const CONFIG_SCHEMA = {
   properties: {
     weather: {
+      title: "Open-Meteo",
       type: 'object',
-      title: 'Weather Service.',
-      description: 'Open-Meteo weather service settings.',
+      description: 'Weather service settings.',
       properties: {
         forecastDays: {
           type: 'number',
-          title: 'Number of daily forecasts',
+          title: 'Daily forecasts',
           default: DEFAULT_FORECAST_DAYS,
           enum: [1, 2, 3, 4, 5, 6, 7],
           description: 'Select the number of daily forecasts to retrieve.'
         },
         forecastHours: {
           type: 'number',
-          title: 'Number of hourly point forecasts',
+          title: 'Hourly point forecasts',
           default: DEFAULT_FORECAST_HOURS,
           enum: [5, 8, 10, 15, 24, 36, 48],
           description:
             'Select the number of hourly point forecasts to retrieve.'
-        },
-        enable: {
-          type: 'boolean',
-          default: false,
-          title: 'Poll periodcally using vessel position.'
         },
         pollInterval: {
           type: 'number',
@@ -50,6 +45,11 @@ const CONFIG_SCHEMA = {
           enum: WEATHER_POLL_INTERVAL,
           description:
             'Select the interval at which the weather service is polled.'
+        },
+        enable: {
+          type: 'boolean',
+          default: false,
+          title: 'Poll periodcally using vessel position.'
         },
         apiKey: {
           type: 'string',
@@ -105,7 +105,7 @@ module.exports = (server: OpenMeteoHelperApp): Plugin => {
   // ******** REQUIRED PLUGIN DEFINITION *******
   const plugin: Plugin = {
     id: 'open-meteo',
-    name: 'Open-Meteo',
+    name: 'Open-Meteo (Weather Provider)',
     schema: () => CONFIG_SCHEMA,
     uiSchema: () => CONFIG_UISCHEMA,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

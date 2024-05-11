@@ -25,10 +25,16 @@ let fetchInterval = 3600000 // 1hr
 let timer: any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let retryTimer: any
-const retryInterval = 10000 // time to wait after a failed api request
-const retryCountMax = 3 // max number of retries on failed api connection
-let retryCount = 0 // number of retries on failed api connection
-let noPosRetryCount = 0 // number of retries on no position detected
+const retry = {
+  interval: 10000, // time to wait after a failed api request
+  maxCount: 3, // max number of retries on failed api connection
+  count: 0 // number of retries on failed api connection
+}
+const noPosRetry = {
+  count: 0, // number of retries to attempted when no position detected
+  maxCount: 12, // maximum number of retries to attempt when no position detected
+  interval: 10000 // time to wait between retires when no position detected
+}
 let weatherService: OpenMeteo
 
 const weatherServiceName = 'OpenMeteo'
@@ -130,25 +136,24 @@ const pollWeatherData = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pos: any = server.getSelfPath('navigation.position')
   if (!pos) {
-    // try <noPosRetryCount> of times to detect vessel position
     server.debug(`*** Weather: No vessel position detected!`)
-    if (noPosRetryCount >= 3) {
+    if (noPosRetry.count >= noPosRetry.maxCount) {
       server.debug(
         `*** Weather: Maximum number of retries to detect vessel position!... sleeping.`
       )
       return
     }
-    noPosRetryCount++
+    noPosRetry.count++
     retryTimer = setTimeout(() => {
       server.debug(
-        `*** Weather: RETRY = ${noPosRetryCount} after no vessel position detected!`
+        `*** Weather: RETRY = ${noPosRetry.count} / ${noPosRetry.maxCount} after no vessel position detected!`
       )
       pollWeatherData()
-    }, 5000)
+    }, noPosRetry.interval)
     return
   }
   server.debug(`*** Vessel position: ${JSON.stringify(pos.value)}.`)
-  noPosRetryCount = 0
+  noPosRetry.count = 0
   if (retryTimer) {
     clearTimeout(retryTimer)
   }
@@ -163,10 +168,10 @@ const pollWeatherData = () => {
       return
     }
   }
-  if (retryCount < retryCountMax) {
-    retryCount++
+  if (retry.count < retry.maxCount) {
+    retry.count++
     server.debug(
-      `*** Weather: Calling service API.....(attempt: ${retryCount})`
+      `*** Weather: Calling service API.....(attempt: ${retry.count})`
     )
 
     server.debug(`Position: ${JSON.stringify(pos.value)}`)
@@ -175,7 +180,7 @@ const pollWeatherData = () => {
       .fetchData(pos.value)
       .then((data) => {
         server.debug(`*** Weather: data received....`)
-        retryCount = 0
+        retry.count = 0
         lastFetch = Date.now()
         lastWake = Date.now()
         //weatherService.meteoData[data.id] = data
@@ -203,18 +208,18 @@ const pollWeatherData = () => {
       .catch((err) => {
         server.debug(
           `*** Weather: ERROR polling weather provider! (retry in ${
-            retryInterval / 1000
+            retry.interval / 1000
           } sec)`
         )
         server.debug(err.message)
         // sleep and retry
-        retryTimer = setTimeout(() => pollWeatherData(), retryInterval)
+        retryTimer = setTimeout(() => pollWeatherData(), retry.interval)
       })
   } else {
     // max retries. sleep and retry?
-    retryCount = 0
+    retry.count = 0
     console.log(
-      `*** Weather: Failed to fetch data after ${retryCountMax} attempts.\nRestart ${pluginId} plugin to retry.`
+      `*** Weather: Failed to fetch data after ${retry.maxCount} attempts.\nRestart ${pluginId} plugin to retry.`
     )
   }
 }
@@ -341,10 +346,10 @@ const emitMeteoDeltas = (data: WeatherProviderData) => {
       server.handleMessage(
         pluginId,
         {
-          context: `meteo.${data.id}`,
+          context: `meteo.${weatherServiceName.toLocaleLowerCase()}`,
           updates: [updates]
         },
-        SKVersion.v2
+        SKVersion.v1
       )
     }
   }

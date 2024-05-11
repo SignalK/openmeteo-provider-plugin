@@ -113,6 +113,7 @@ interface OMServiceResponse {
 export class OpenMeteo {
   private settings: WEATHER_CONFIG
   private wcache: WCache
+  private precision = 5 // geohash precision (5x5 km)
 
   constructor(config: WEATHER_CONFIG, path: string) {
     this.settings = config
@@ -249,7 +250,8 @@ export class OpenMeteo {
       console.log('WeatherCache miss ... fetching from weather service....')
       idx = geohash.encode(
         (position as Position).latitude,
-        (position as Position).longitude
+        (position as Position).longitude,
+        this.precision
       )
     }
 
