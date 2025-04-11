@@ -85,12 +85,12 @@ interface SETTINGS {
   weather: WEATHER_CONFIG
 }
 
-export interface OpenMeteoHelperApp
+export interface OpenMeteoProviderApp
   extends Application,
     ServerAPI,
     WeatherProviderRegistry {}
 
-module.exports = (server: OpenMeteoHelperApp): Plugin => {
+module.exports = (server: OpenMeteoProviderApp): Plugin => {
   // ** default configuration settings
   let settings: SETTINGS = {
     weather: {

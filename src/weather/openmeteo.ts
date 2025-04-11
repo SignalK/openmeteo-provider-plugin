@@ -211,25 +211,30 @@ export class OpenMeteo {
   private fetchFromService = async (
     position: Position
   ): Promise<OMServiceResponse> => {
-    let url = this.getUrl(position, 'forecast')
-    let res = await fetch(url)
-    const forecastRes: OMServiceResponse = await res.json()
+    let forecastRes!: OMServiceResponse
+    try {
+      let url = this.getUrl(position, 'forecast')
+      let res = await fetch(url)
+      forecastRes = await res.json()
 
-    url = this.getUrl(position, 'marine')
-    res = await fetch(url)
-    const marineRes = await res.json()
+      url = this.getUrl(position, 'marine')
+      res = await fetch(url)
+      const marineRes = await res.json()
 
-    const h = Object.assign({}, forecastRes.hourly, marineRes.hourly)
-    const hu = Object.assign(
-      {},
-      forecastRes.hourly_units,
-      marineRes.hourly_units
-    )
+      const h = Object.assign({}, forecastRes.hourly, marineRes.hourly)
+      const hu = Object.assign(
+        {},
+        forecastRes.hourly_units,
+        marineRes.hourly_units
+      )
 
-    forecastRes.hourly_units = hu
-    forecastRes.hourly = h
-
-    return forecastRes
+      forecastRes.hourly_units = hu
+      forecastRes.hourly = h
+      return forecastRes
+    } catch (err) {
+      console.log('** open-meteo fetch error!', err)
+      return forecastRes
+    }
   }
 
   /**
@@ -349,11 +354,11 @@ export class OpenMeteo {
             swellDirection:
               Convert.degreesToRadians(forecasts.swell_wave_direction[i]) ??
               null,
-            swellPeriod: forecasts.swell_wave_period[i] * 1000 ?? null,
+            swellPeriod: forecasts.swell_wave_period[i] ? forecasts.swell_wave_period[i] * 1000 : undefined,
             waveSignificantHeight: forecasts.wave_height[i] ?? null,
             waveDirection:
               Convert.degreesToRadians(forecasts.wave_direction[i]) ?? null,
-            wavePeriod: forecasts.wave_period[i] * 1000 ?? null
+            wavePeriod: forecasts.wave_period[i] ? forecasts.wave_period[i] * 1000 : undefined
           },
           wind: {
             speedTrue: Convert.kmhToMsec(forecasts.wind_speed_10m[i]) ?? null,

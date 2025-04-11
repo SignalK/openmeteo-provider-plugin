@@ -1,5 +1,5 @@
 import { SKVersion, Position } from '@signalk/server-api'
-import { OpenMeteoHelperApp } from '..'
+import { OpenMeteoProviderApp } from '..'
 import { OpenMeteo } from './openmeteo'
 
 //************ Signal K Weather API ****************
@@ -14,7 +14,7 @@ export interface WEATHER_CONFIG {
   forecastDays: number
 }
 
-let server: OpenMeteoHelperApp
+let server: OpenMeteoProviderApp
 let pluginId: string
 
 const wakeInterval = 60000
@@ -95,7 +95,7 @@ export const getForecastData = async (
 }
 
 export const initWeather = (
-  app: OpenMeteoHelperApp,
+  app: OpenMeteoProviderApp,
   id: string,
   config: WEATHER_CONFIG
 ) => {
