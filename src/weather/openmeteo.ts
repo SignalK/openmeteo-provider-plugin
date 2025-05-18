@@ -2,13 +2,17 @@
 
 import { Position } from '@signalk/server-api'
 import { Convert } from '../lib/convert'
-import * as geohash from 'ngeohash'
 
 import { WEATHER_CONFIG } from './weather-service'
-import { WCache } from '../lib/cache'
 
-//************ Signal K Weather API ****************
-import { WeatherProviderData, WeatherData } from '../lib/mock-weather-api'
+/**
+ * @todo remove reference to mock-weather-api
+ */
+import {
+  WeatherData,
+  WeatherForecastType,
+  WeatherReqParams
+} from '../lib/mock-weather-api'
 // *************************************************
 
 interface OMServiceResponse {
@@ -112,18 +116,16 @@ interface OMServiceResponse {
 
 export class OpenMeteo {
   private settings: WEATHER_CONFIG
-  private wcache: WCache
   private precision = 5 // geohash precision (5x5 km)
 
-  constructor(config: WEATHER_CONFIG, path: string) {
+  constructor(config: WEATHER_CONFIG) {
     this.settings = config
-    this.wcache = new WCache(path)
-    this.wcache.maxAge = this.settings.pollInterval
   }
 
   private getUrl(
     position: Position,
-    type: 'forecast' | 'marine' | 'current' = 'forecast'
+    type: 'forecast' | 'marine' | 'current' = 'forecast',
+    options?: WeatherReqParams
   ): string {
     if (!position) {
       return ''
@@ -184,7 +186,7 @@ export class OpenMeteo {
     let apiType = ''
     let apiPage = 'forecast'
     let urlParam: string
-    const forecastPeriod = `&forecast_days=${this.settings.forecastDays}&forecast_hours=${this.settings.forecastHours}`
+    const forecastPeriod = `&forecast_days=${options?.maxCount ?? 5}&forecast_hours=${options?.maxCount ?? 8}`
     const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
 
     switch (type) {
@@ -193,13 +195,16 @@ export class OpenMeteo {
         apiPage = type
         urlParam = `&hourly=${params[type].toString()}${forecastPeriod}`
         break
+      case 'current':
+        urlParam = `&current=${params['current'].toString()}${forecastPeriod}`
+        break
       default:
         urlParam = `&hourly=${params[type].toString()}&daily=${params[
           'daily'
         ].toString()}&current=${params['current'].toString()}${forecastPeriod}`
     }
 
-    const url = `https://${apiType}api.open-meteo.com/v1/${apiPage}?timeformat=unixtime&cell_selection=sea`
+    const url = `https://${apiType}api.open-meteo.com/v1/${apiPage}?timeformat=unixtime&cell_selection=sea&wind_speed_unit=ms`
 
     return `${url}${pos}${urlParam}`
   }
@@ -209,15 +214,14 @@ export class OpenMeteo {
    *  @params position: {latitude, longitude}
    */
   private fetchFromService = async (
-    position: Position
+    url: string
   ): Promise<OMServiceResponse> => {
     let forecastRes!: OMServiceResponse
     try {
-      let url = this.getUrl(position, 'forecast')
-      let res = await fetch(url)
+      const res = await fetch(url)
       forecastRes = await res.json()
 
-      url = this.getUrl(position, 'marine')
+      /*url = this.getUrl(position, 'marine')
       res = await fetch(url)
       const marineRes = await res.json()
 
@@ -226,10 +230,10 @@ export class OpenMeteo {
         {},
         forecastRes.hourly_units,
         marineRes.hourly_units
-      )
+      )*/
 
-      forecastRes.hourly_units = hu
-      forecastRes.hourly = h
+      //forecastRes.hourly_units = hu
+      //forecastRes.hourly = h
       return forecastRes
     } catch (err) {
       console.log('** open-meteo fetch error!', err)
@@ -240,40 +244,39 @@ export class OpenMeteo {
   /**
    * Fetch weather data for provided Position. Returns data in cache if present.
    *  @params position: {latitude, longitude}
-   *  @params bypassCache: true = Always fetch from source (ignores the cache)
+   *  @params options query options
    */
-  fetchData = async (
+  fetchObservations = async (
     position: Position,
-    bypassCache?: boolean
-  ): Promise<WeatherProviderData> => {
-    let idx = !bypassCache ? this.wcache.contains(position) : undefined
-
-    if (idx) {
-      console.log(`WeatherCache hit ... returning cached data....`)
-      return await this.wcache.getEntry(idx)
-    } else {
-      console.log('WeatherCache miss ... fetching from weather service....')
-      idx = geohash.encode(
-        (position as Position).latitude,
-        (position as Position).longitude,
-        this.precision
-      )
-    }
-
+    options?: WeatherReqParams
+  ): Promise<WeatherData[]> => {
     try {
-      const wData = await this.fetchFromService(position as Position)
-      const wd = {
-        id: idx,
-        position: {
-          latitude: (position as Position).latitude,
-          longitude: (position as Position).longitude
-        },
-        observations: this.parseCurrent(wData),
-        forecasts: this.parseForecasts(wData),
-        warnings: []
-      }
-      this.wcache.setEntry(idx, wd)
-      return wd
+      const url = this.getUrl(position, 'forecast', options)
+      const wData = await this.fetchFromService(url)
+      //const murl = this.getUrl(position, 'marine', options)
+      //const mData = await this.fetchFromService(murl)
+      return this.parseCurrent(wData)
+    } catch (err) {
+      throw new Error(`fetching / parsing weather data!`)
+    }
+  }
+
+  /**
+   * Fetch weather data for provided Position. Returns data in cache if present.
+   *  @params position: {latitude, longitude}
+   *  @params type: forecast type
+   *  @params options query options
+   */
+  fetchForecasts = async (
+    position: Position,
+    options?: WeatherReqParams
+  ): Promise<WeatherData[]> => {
+    try {
+      const url = this.getUrl(position, 'forecast', options)
+      const wData = await this.fetchFromService(url)
+      //const murl = this.getUrl(position, 'marine', options)
+      //const mData = await this.fetchFromService(murl)
+      return this.parseForecasts(wData)
     } catch (err) {
       throw new Error(`fetching / parsing weather data!`)
     }
@@ -310,10 +313,10 @@ export class OpenMeteo {
           uvIndex: omData.daily.uv_index_max[0] ?? null
         },
         wind: {
-          speedTrue: Convert.kmhToMsec(observations.wind_speed_10m) ?? null,
+          speedTrue: observations.wind_speed_10m ?? null,
           directionTrue:
             Convert.degreesToRadians(observations.wind_direction_10m) ?? null,
-          gust: Convert.kmhToMsec(observations.wind_gusts_10m) ?? null
+          gust: observations.wind_gusts_10m ?? null
         }
       }
       data.push(obs)
@@ -350,21 +353,25 @@ export class OpenMeteo {
             horizontalVisibility: forecasts.visibility[i] ?? null
           },
           water: {
-            swellHeight: forecasts.swell_wave_height[i] ?? null,
+            /*swellHeight: forecasts.swell_wave_height[i] ?? null,
             swellDirection:
               Convert.degreesToRadians(forecasts.swell_wave_direction[i]) ??
               null,
-            swellPeriod: forecasts.swell_wave_period[i] ? forecasts.swell_wave_period[i] * 1000 : undefined,
+            swellPeriod: forecasts.swell_wave_period[i]
+              ? forecasts.swell_wave_period[i] * 1000
+              : undefined,
             waveSignificantHeight: forecasts.wave_height[i] ?? null,
             waveDirection:
               Convert.degreesToRadians(forecasts.wave_direction[i]) ?? null,
-            wavePeriod: forecasts.wave_period[i] ? forecasts.wave_period[i] * 1000 : undefined
+            wavePeriod: forecasts.wave_period[i]
+              ? forecasts.wave_period[i] * 1000
+              : undefined*/
           },
           wind: {
-            speedTrue: Convert.kmhToMsec(forecasts.wind_speed_10m[i]) ?? null,
+            speedTrue: forecasts.wind_speed_10m[i] ?? null,
             directionTrue:
               Convert.degreesToRadians(forecasts.wind_direction_10m[i]) ?? null,
-            gust: Convert.kmhToMsec(forecasts.wind_gusts_10m[i]) ?? null
+            gust: forecasts.wind_gusts_10m[i] ?? null
           }
         }
         data.push(forecast)

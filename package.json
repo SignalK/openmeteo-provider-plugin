@@ -1,6 +1,6 @@
 {
   "name": "@signalk/open-meteo-provider",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open-Meteo weather provider plugin for Signal K Server",
   "main": "plugin/index.js",
   "scripts": {
@@ -24,7 +24,6 @@
   },
   "dependencies": {
     "geolib": "^3.3.4",
-    "ngeohash": "^0.6.3",
     "tslib": "^2.0.0"
   },
   "repository": {

@@ -2,55 +2,24 @@ import { Plugin, ServerAPI } from '@signalk/server-api'
 import { Application } from 'express'
 
 import {
-  WEATHER_POLL_INTERVAL,
   WEATHER_CONFIG,
   initWeather,
   stopWeather
 } from './weather/weather-service'
 
-//************ Signal K Weather API ****************
+/**
+ * @todo remove reference to mock-weather-api
+ */
 import { WeatherProviderRegistry } from './lib/mock-weather-api'
 // *************************************************
-
-const DEFAULT_POLL_INTERVAL = 60
-const DEFAULT_FORECAST_HOURS = 8
-const DEFAULT_FORECAST_DAYS = 1
 
 const CONFIG_SCHEMA = {
   properties: {
     weather: {
-      title: "Open-Meteo",
+      title: 'Open-Meteo',
       type: 'object',
       description: 'Weather service settings.',
       properties: {
-        forecastDays: {
-          type: 'number',
-          title: 'Daily forecasts',
-          default: DEFAULT_FORECAST_DAYS,
-          enum: [1, 2, 3, 4, 5, 6, 7],
-          description: 'Select the number of daily forecasts to retrieve.'
-        },
-        forecastHours: {
-          type: 'number',
-          title: 'Hourly point forecasts',
-          default: DEFAULT_FORECAST_HOURS,
-          enum: [5, 8, 10, 15, 24, 36, 48],
-          description:
-            'Select the number of hourly point forecasts to retrieve.'
-        },
-        pollInterval: {
-          type: 'number',
-          title: 'Polling Interval',
-          default: 60,
-          enum: WEATHER_POLL_INTERVAL,
-          description:
-            'Select the interval at which the weather service is polled.'
-        },
-        enable: {
-          type: 'boolean',
-          default: false,
-          title: 'Poll periodcally using vessel position.'
-        },
         apiKey: {
           type: 'string',
           title: 'API Key (optional)',
@@ -64,16 +33,6 @@ const CONFIG_SCHEMA = {
 
 const CONFIG_UISCHEMA = {
   weather: {
-    enable: {
-      'ui:widget': 'checkbox',
-      'ui:title': ' ',
-      'ui:help': ' '
-    },
-    pollInterval: {
-      'ui:widget': 'select',
-      'ui:title': 'Polling Interval (mins)',
-      'ui:help': ' '
-    },
     apiKey: {
       'ui:disabled': false,
       'ui-help': ''
@@ -94,11 +53,7 @@ module.exports = (server: OpenMeteoProviderApp): Plugin => {
   // ** default configuration settings
   let settings: SETTINGS = {
     weather: {
-      enable: false,
-      apiKey: '',
-      pollInterval: DEFAULT_POLL_INTERVAL,
-      forecastHours: 8,
-      forecastDays: 1
+      apiKey: ''
     }
   }
 
@@ -133,18 +88,9 @@ module.exports = (server: OpenMeteoProviderApp): Plugin => {
       }
 
       settings.weather = options.weather ?? {
-        enable: false,
-        apiKey: '',
-        pollInterval: DEFAULT_POLL_INTERVAL
+        apiKey: ''
       }
-      settings.weather.enable = options.weather.enable ?? false
       settings.weather.apiKey = options.weather.apiKey ?? ''
-      settings.weather.pollInterval =
-        options.weather.pollInterval ?? DEFAULT_POLL_INTERVAL
-      settings.weather.forecastHours =
-        options.weather.forecastHours ?? DEFAULT_FORECAST_HOURS
-      settings.weather.forecastDays =
-        options.weather.forecastDays ?? DEFAULT_FORECAST_DAYS
 
       server.debug(`Applied config: ${JSON.stringify(settings)}`)
 

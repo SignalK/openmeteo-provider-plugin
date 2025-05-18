@@ -5,17 +5,21 @@ import { Position } from '@signalk/server-api'
 export interface WeatherApi {
   register: (pluginId: string, provider: WeatherProvider) => void
   unRegister: (pluginId: string) => void
-  emitWarning: (
-    pluginId: string,
-    position: Position,
-    warnings: WeatherWarning[]
-  ) => void
 }
 
 export interface WeatherProviderRegistry {
+  /**
+   * Used by _Weather Provider plugins_ to register the weather service from which the data is sourced.
+   * See [`Weather Provider Plugins`](../../../docs/develop/plugins/weather_provider_plugins.md#registering-as-a-weather-provider) for details.
+   *
+   * @category Weather API
+   */
   registerWeatherProvider: (provider: WeatherProvider) => void
 }
 
+/**
+ * @hidden visible through ServerAPI
+ */
 export interface WeatherProviders {
   [id: string]: {
     name: string
@@ -23,6 +27,9 @@ export interface WeatherProviders {
   }
 }
 
+/**
+ * @hidden visible through ServerAPI
+ * @see {isWeatherProvider} ts-auto-guard:type-guard */
 export interface WeatherProvider {
   name: string // e.g. OpenWeather, Open-Meteo, NOAA
   methods: WeatherProviderMethods
@@ -30,19 +37,25 @@ export interface WeatherProvider {
 
 export interface WeatherProviderMethods {
   pluginId?: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  getData: (position: Position) => Promise<WeatherProviderData>
-  getObservations: (position: Position) => Promise<WeatherData[]>
-  getForecasts: (position: Position) => Promise<WeatherData[]>
-  getWarnings: (position: Position) => Promise<WeatherWarning[]>
-}
 
-export interface WeatherProviderData {
-  id: string
-  position: Position
-  observations: WeatherData[]
-  forecasts: WeatherData[]
-  warnings?: Array<WeatherWarning>
+  getObservations: (
+    position: Position,
+    options?: {
+      maxCount?: number
+      startDate?: string
+    }
+  ) => Promise<WeatherData[]>
+
+  getForecasts: (
+    position: Position,
+    type: WeatherForecastType,
+    options?: {
+      maxCount?: number
+      startDate?: string
+    }
+  ) => Promise<WeatherData[]>
+
+  getWarnings: (position: Position) => Promise<WeatherWarning[]>
 }
 
 export interface WeatherWarning {
@@ -53,11 +66,31 @@ export interface WeatherWarning {
   type: string
 }
 
+/**
+ * @hidden visible through ServerAPI
+ */
+export interface WeatherReqParams {
+  maxCount?: number
+  startDate?: string
+}
+
+/**
+ * @hidden visible through ServerAPI
+ */
+export type WeatherForecastType = 'daily' | 'point'
+/**
+ * @hidden visible through ServerAPI
+ */
+export type WeatherDataType = WeatherForecastType | 'observation'
+
 // Aligned with Signal K environment specification
+/**
+ * @hidden visible through ServerAPI
+ */
 export interface WeatherData {
   description?: string
   date: string
-  type: 'daily' | 'point' | 'observation' // daily forecast, point-in-time forecast, observed values
+  type: WeatherDataType // daily forecast, point-in-time forecast, observed values
   outside?: {
     minTemperature?: number
     maxTemperature?: number
@@ -100,12 +133,18 @@ export interface WeatherData {
   }
 }
 
+/**
+ * @hidden visible through ServerAPI
+ */
 export type TendencyKind =
   | 'steady'
   | 'decreasing'
   | 'increasing'
   | 'not available'
 
+/**
+ * @hidden visible through ServerAPI
+ */
 export type PrecipitationKind =
   | 'reserved'
   | 'rain'
