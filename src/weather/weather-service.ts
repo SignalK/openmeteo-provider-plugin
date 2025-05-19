@@ -55,7 +55,9 @@ export const initWeather = (
   server = app
   pluginId = id
 
-  server.debug(`*** Weather: settings: ${JSON.stringify(config)}`)
+  server.debug(
+    `*** Weather: settings: ${JSON.stringify(config)}, plugin ID: ${pluginId}`
+  )
   server.registerWeatherProvider(providerRegistration)
   weatherService = new OpenMeteo(config)
 }
