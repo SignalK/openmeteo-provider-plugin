@@ -71,6 +71,7 @@ interface OMServiceResponse {
     wind_gusts_10m: string
     precipitation: string
     visibility: string
+    weather_code: string
   }
   hourly: {
     time: number[]
@@ -91,6 +92,7 @@ interface OMServiceResponse {
     wave_height: Array<number>
     wave_direction: Array<number>
     wave_period: Array<number>
+    weather_code: Array<number>
   }
   daily_units: {
     time: string
@@ -101,6 +103,10 @@ interface OMServiceResponse {
     daylight_duration: string
     uv_index_max: string
     uv_index_clear_sky_max: string
+    weather_code: string
+    wind_speed_10m_max: string
+    wind_direction_10m_dominant: string
+    wind_gusts_10m_max: string
   }
   daily: {
     time: number[]
@@ -111,7 +117,43 @@ interface OMServiceResponse {
     daylight_duration: Array<number>
     uv_index_max: Array<number>
     uv_index_clear_sky_max: Array<number>
+    weather_code: Array<number>
+    wind_speed_10m_max: Array<number>
+    wind_direction_10m_dominant: Array<number>
+    wind_gusts_10m_max: Array<number>
   }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WMO_CODE: any = {
+  0: 'Clear sky',
+  1: 'Mainly clear',
+  2: 'Partly cloudy',
+  3: 'Overcast',
+  45: 'Fog',
+  48: 'Depositing rime fog',
+  51: 'Drizzle: Light',
+  53: 'Drizzle: Moderate',
+  55: 'Drizzle: Dense intensity',
+  56: 'Freezing Drizzle: Light',
+  57: 'Freezing Drizzle: Dense intensity',
+  61: 'Rain: Slight',
+  63: 'Rain: Moderate',
+  65: 'Rain: Heavy intensity',
+  66: 'Freezing Rain: Light',
+  67: 'Freezing Rain: Heavy intensity',
+  71: 'Snow fall: Slight',
+  73: 'Snow fall: Moderate',
+  75: 'Snow fall: Heavy intensity',
+  77: 'Snow grains',
+  80: 'Rain showers: Slight',
+  81: 'Rain showers: Moderate',
+  82: 'Rain showers: Violent',
+  85: 'Snow showers: Slight',
+  86: 'Snow showers  Heavy',
+  95: 'Thunderstorm: Slight or moderate',
+  96: 'Thunderstorm with slight hail',
+  99: 'Thunderstorm with heavy hail'
 }
 
 export class OpenMeteo {
@@ -122,37 +164,37 @@ export class OpenMeteo {
     this.settings = config
   }
 
+  private getMarineUrl(position: Position, options?: WeatherReqParams): string {
+    if (!position) {
+      return ''
+    }
+
+    const params = [
+      'wave_height',
+      'wave_direction',
+      'wave_period',
+      'swell_wave_height',
+      'swell_wave_direction',
+      'swell_wave_period',
+      'swell_wave_peak_period'
+    ]
+
+    const forecastPeriod = `&forecast_hours=${options?.maxCount ?? 8}` //&forecast_days=${options?.maxCount ?? 5}`
+    const urlParam = `&hourly=${params.toString()}${forecastPeriod}`
+    const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
+    const url = `https://marine-api.open-meteo.com/v1/marine?timeformat=unixtime&wind_speed_unit=ms`
+    return `${url}${pos}${urlParam}`
+  }
+
   private getUrl(
     position: Position,
-    type: 'forecast' | 'marine' | 'current' = 'forecast',
+    type?: 'daily' | 'hourly' | 'current',
     options?: WeatherReqParams
   ): string {
     if (!position) {
       return ''
     }
     const params = {
-      forecast: [
-        'temperature_2m',
-        'relative_humidity_2m',
-        'dew_point_2m',
-        'apparent_temperature',
-        'pressure_msl',
-        'cloud_cover',
-        'wind_speed_10m',
-        'wind_direction_10m',
-        'wind_gusts_10m',
-        'precipitation',
-        'visibility'
-      ],
-      marine: [
-        'wave_height',
-        'wave_direction',
-        'wave_period',
-        'swell_wave_height',
-        'swell_wave_direction',
-        'swell_wave_period',
-        'swell_wave_peak_period'
-      ],
       current: [
         'temperature_2m',
         'relative_humidity_2m',
@@ -171,6 +213,20 @@ export class OpenMeteo {
         'weather_code',
         'surface_pressure'
       ],
+      hourly: [
+        'temperature_2m',
+        'relative_humidity_2m',
+        'dew_point_2m',
+        'apparent_temperature',
+        'pressure_msl',
+        'cloud_cover',
+        'wind_speed_10m',
+        'wind_direction_10m',
+        'wind_gusts_10m',
+        'precipitation',
+        'visibility',
+        'weather_code'
+      ],
       daily: [
         'temperature_2m_max',
         'temperature_2m_min',
@@ -179,33 +235,32 @@ export class OpenMeteo {
         'daylight_duration',
         'sunshine_duration',
         'uv_index_max',
-        'uv_index_clear_sky_max'
+        'uv_index_clear_sky_max',
+        'weather_code',
+        'wind_speed_10m_max',
+        'wind_direction_10m_dominant',
+        'wind_gusts_10m_max'
       ]
     }
 
-    let apiType = ''
-    let apiPage = 'forecast'
-    let urlParam: string
-    const forecastPeriod = `&forecast_days=${options?.maxCount ?? 5}&forecast_hours=${options?.maxCount ?? 8}`
+    const forecastPeriod = `&forecast_days=${
+      options?.maxCount ?? 5
+    }&forecast_hours=${options?.maxCount ?? 8}`
     const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
+    const url = `https://api.open-meteo.com/v1/forecast?timeformat=unixtime&cell_selection=sea&wind_speed_unit=ms`
+    let urlParam: string
 
-    switch (type) {
-      case 'marine':
-        apiType = `${type}-`
-        apiPage = type
-        urlParam = `&hourly=${params[type].toString()}${forecastPeriod}`
-        break
-      case 'current':
-        urlParam = `&current=${params['current'].toString()}${forecastPeriod}`
-        break
-      default:
-        urlParam = `&hourly=${params[type].toString()}&daily=${params[
-          'daily'
-        ].toString()}&current=${params['current'].toString()}${forecastPeriod}`
+    if (type === 'current') {
+      urlParam = `&current=${params[type].toString()}`
+    } else if (type === 'hourly') {
+      urlParam = `&hourly=${params[type].toString()}${forecastPeriod}`
+    } else if (type === 'daily') {
+      urlParam = `&daily=${params[type].toString()}${forecastPeriod}`
+    } else {
+      urlParam = `&hourly=${params['hourly'].toString()}&daily=${params[
+        'daily'
+      ].toString()}&current=${params['current'].toString()}${forecastPeriod}`
     }
-
-    const url = `https://${apiType}api.open-meteo.com/v1/${apiPage}?timeformat=unixtime&cell_selection=sea&wind_speed_unit=ms`
-
     return `${url}${pos}${urlParam}`
   }
 
@@ -251,10 +306,10 @@ export class OpenMeteo {
     options?: WeatherReqParams
   ): Promise<WeatherData[]> => {
     try {
-      const url = this.getUrl(position, 'forecast', options)
-      const wData = await this.fetchFromService(url)
-      //const murl = this.getUrl(position, 'marine', options)
+      //const murl = this.getMarineUrl(position, options)
       //const mData = await this.fetchFromService(murl)
+      const url = this.getUrl(position, 'current', options)
+      const wData = await this.fetchFromService(url)
       return this.parseCurrent(wData)
     } catch (err) {
       throw new Error(`fetching / parsing weather data!`)
@@ -269,13 +324,13 @@ export class OpenMeteo {
    */
   fetchForecasts = async (
     position: Position,
+    type: WeatherForecastType,
     options?: WeatherReqParams
   ): Promise<WeatherData[]> => {
+    const omType = type === 'point' ? 'hourly' : 'daily'
     try {
-      const url = this.getUrl(position, 'forecast', options)
+      const url = this.getUrl(position, omType, options)
       const wData = await this.fetchFromService(url)
-      //const murl = this.getUrl(position, 'marine', options)
-      //const mData = await this.fetchFromService(murl)
       return this.parseForecasts(wData)
     } catch (err) {
       throw new Error(`fetching / parsing weather data!`)
@@ -289,16 +344,10 @@ export class OpenMeteo {
       const observations = omData.current
       const obs: WeatherData = {
         date: new Date(Convert.fromUnixTime(observations.time)).toISOString(),
-        //description: '',
+        description: observations.weather_code
+          ? WMO_CODE[observations.weather_code]
+          : '',
         type: 'observation',
-        sun: {
-          sunrise: new Date(
-            Convert.fromUnixTime(omData.daily.sunrise[0])
-          ).toISOString(),
-          sunset: new Date(
-            Convert.fromUnixTime(omData.daily.sunset[0])
-          ).toISOString()
-        },
         outside: {
           feelsLikeTemperature:
             Convert.celciusToKelvin(observations.apparent_temperature) ?? null,
@@ -309,8 +358,7 @@ export class OpenMeteo {
           relativeHumidity:
             Convert.toRatio(observations.relative_humidity_2m) ?? null,
           precipitationType: 'rain',
-          precipitationVolume: observations.precipitation ?? null,
-          uvIndex: omData.daily.uv_index_max[0] ?? null
+          precipitationVolume: observations.rain ?? null
         },
         wind: {
           speedTrue: observations.wind_speed_10m ?? null,
@@ -327,17 +375,15 @@ export class OpenMeteo {
 
   private parseForecasts(omData: OMServiceResponse): WeatherData[] {
     const data: WeatherData[] = []
-
-    if (
-      omData &&
-      typeof omData.hourly.time !== 'undefined' &&
-      Array.isArray(omData.hourly.time)
-    ) {
+    if (omData && omData.hourly?.time && Array.isArray(omData.hourly.time)) {
       const forecasts = omData.hourly
       for (let i = 0; i < forecasts.time.length; ++i) {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'point',
+          description: forecasts.weather_code[i]
+            ? WMO_CODE[forecasts.weather_code[i]]
+            : '',
           outside: {
             feelsLikeTemperature:
               Convert.celciusToKelvin(forecasts.apparent_temperature[i]) ??
@@ -352,8 +398,8 @@ export class OpenMeteo {
               Convert.toRatio(forecasts.relative_humidity_2m[i]) ?? null,
             horizontalVisibility: forecasts.visibility[i] ?? null
           },
-          water: {
-            /*swellHeight: forecasts.swell_wave_height[i] ?? null,
+          /*water: {
+            swellHeight: forecasts.swell_wave_height[i] ?? null,
             swellDirection:
               Convert.degreesToRadians(forecasts.swell_wave_direction[i]) ??
               null,
@@ -365,8 +411,8 @@ export class OpenMeteo {
               Convert.degreesToRadians(forecasts.wave_direction[i]) ?? null,
             wavePeriod: forecasts.wave_period[i]
               ? forecasts.wave_period[i] * 1000
-              : undefined*/
-          },
+              : undefined
+          },*/
           wind: {
             speedTrue: forecasts.wind_speed_10m[i] ?? null,
             directionTrue:
@@ -377,22 +423,29 @@ export class OpenMeteo {
         data.push(forecast)
       }
     }
-    if (
-      omData &&
-      typeof omData.daily.time !== 'undefined' &&
-      Array.isArray(omData.daily.time)
-    ) {
+    if (omData && omData.daily?.time && Array.isArray(omData.daily.time)) {
       const forecasts = omData.daily
       for (let i = 0; i < forecasts.time.length; ++i) {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
+          description: forecasts.weather_code[i]
+            ? WMO_CODE[forecasts.weather_code[i]]
+            : '',
           outside: {
             minTemperature:
               Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
             maxTemperature:
               Convert.celciusToKelvin(forecasts.temperature_2m_max[i]) ?? null,
             uvIndex: forecasts.uv_index_max[i] ?? null
+          },
+          wind: {
+            speedTrue: forecasts.wind_speed_10m_max[i] ?? null,
+            directionTrue:
+              Convert.degreesToRadians(
+                forecasts.wind_direction_10m_dominant[i]
+              ) ?? null,
+            gust: forecasts.wind_gusts_10m_max[i] ?? null
           },
           sun: {
             sunrise:
