@@ -1,12 +1,10 @@
 import { OpenMeteoProviderApp } from '..'
 import { OpenMeteo } from './openmeteo'
-import { Position } from '@signalk/server-api'
-
-/**
- * @todo remove reference to mock-weather-api
- */
-import { WeatherForecastType, WeatherReqParams } from '../lib/mock-weather-api'
-// *************************************************
+import {
+  Position,
+  WeatherForecastType,
+  WeatherReqParams
+} from '@signalk/server-api'
 
 export interface WEATHER_CONFIG {
   apiKey: string

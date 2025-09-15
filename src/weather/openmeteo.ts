@@ -1,19 +1,14 @@
 // OpenMedia
 
-import { Position } from '@signalk/server-api'
-import { Convert } from '../lib/convert'
-
-import { WEATHER_CONFIG } from './weather-service'
-
-/**
- * @todo remove reference to mock-weather-api
- */
 import {
+  Position,
   WeatherData,
   WeatherForecastType,
   WeatherReqParams
-} from '../lib/mock-weather-api'
-// *************************************************
+} from '@signalk/server-api'
+import { Convert } from '../lib/convert'
+
+import { WEATHER_CONFIG } from './weather-service'
 
 interface OMServiceResponse {
   latitude: number
