@@ -61,5 +61,7 @@ export const initWeather = (
 }
 
 export const stopWeather = () => {
-  server.debug('** Stopping **')
+  if (server) {
+    server.debug('** Stopping **')
+  }
 }
