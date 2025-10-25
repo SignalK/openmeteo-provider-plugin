@@ -29,6 +29,11 @@ export class Convert {
     return val / 3.6
   }
 
+  //** mm to m **
+  static mmToM(val: number): number {
+    return val / 1000
+  }
+
   static toRatio(val: number): number {
     return val / 100
   }

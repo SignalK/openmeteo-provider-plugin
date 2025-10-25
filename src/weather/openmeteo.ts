@@ -353,7 +353,7 @@ export class OpenMeteo {
           relativeHumidity:
             Convert.toRatio(observations.relative_humidity_2m) ?? null,
           precipitationType: 'rain',
-          precipitationVolume: observations.rain ?? null
+          precipitationVolume: Convert.mmToM(observations.rain) ?? null
         },
         wind: {
           speedTrue: observations.wind_speed_10m ?? null,
