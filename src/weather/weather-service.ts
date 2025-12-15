@@ -7,7 +7,8 @@ import {
 } from '@signalk/server-api'
 
 export interface WEATHER_CONFIG {
-  apiKey: string
+  apiKey?: string
+  cacheTTL?: number // cache time-to-live in minutes
 }
 
 const weatherServiceName = 'OpenMeteo'
