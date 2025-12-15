@@ -167,8 +167,16 @@ export class OpenMeteo {
     this.cacheTTL = (config.cacheTTL ?? 10) * 60 * 1000 // default 10 minutes
   }
 
-  private getCacheKey(position: Position, type: string, maxCount?: number): string {
-    const hash = Convert.geohash(position.latitude, position.longitude, this.precision)
+  private getCacheKey(
+    position: Position,
+    type: string,
+    maxCount?: number
+  ): string {
+    const hash = Convert.geohash(
+      position.latitude,
+      position.longitude,
+      this.precision
+    )
     return `${hash}:${type}:${maxCount ?? 'default'}`
   }
 
@@ -304,6 +312,7 @@ export class OpenMeteo {
     let forecastRes!: OMServiceResponse
     try {
       const res = await fetch(url)
+
       forecastRes = await res.json()
 
       /*url = this.getUrl(position, 'marine')
@@ -390,9 +399,10 @@ export class OpenMeteo {
       const observations = omData.current
       const obs: WeatherData = {
         date: new Date(Convert.fromUnixTime(observations.time)).toISOString(),
-        description: observations.weather_code !== undefined
-          ? WMO_CODE[observations.weather_code] ?? ''
-          : '',
+        description:
+          observations.weather_code !== undefined
+            ? WMO_CODE[observations.weather_code] ?? ''
+            : '',
         type: 'observation',
         outside: {
           feelsLikeTemperature:
@@ -427,9 +437,10 @@ export class OpenMeteo {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'point',
-          description: forecasts.weather_code[i] !== undefined
-            ? WMO_CODE[forecasts.weather_code[i]] ?? ''
-            : '',
+          description:
+            forecasts.weather_code[i] !== undefined
+              ? WMO_CODE[forecasts.weather_code[i]] ?? ''
+              : '',
           outside: {
             feelsLikeTemperature:
               Convert.celciusToKelvin(forecasts.apparent_temperature[i]) ??
@@ -475,9 +486,10 @@ export class OpenMeteo {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
-          description: forecasts.weather_code[i] !== undefined
-            ? WMO_CODE[forecasts.weather_code[i]] ?? ''
-            : '',
+          description:
+            forecasts.weather_code[i] !== undefined
+              ? WMO_CODE[forecasts.weather_code[i]] ?? ''
+              : '',
           outside: {
             minTemperature:
               Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,

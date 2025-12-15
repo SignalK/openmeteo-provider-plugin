@@ -45,8 +45,10 @@ export class Convert {
   // ******* Geohash ********
   static geohash(lat: number, lon: number, precision = 5): string {
     const base32 = '0123456789bcdefghjkmnpqrstuvwxyz'
-    let minLat = -90, maxLat = 90
-    let minLon = -180, maxLon = 180
+    let minLat = -90,
+      maxLat = 90
+    let minLon = -180,
+      maxLon = 180
     let hash = ''
     let isEven = true
     let bit = 0

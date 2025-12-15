@@ -18,13 +18,15 @@ const CONFIG_SCHEMA = {
           type: 'string',
           title: 'API Key (optional)',
           default: '',
-          description: 'Leave blank for free personal use. Go to https://open-meteo.com for a paid API.'
+          description:
+            'Leave blank for free personal use. Go to https://open-meteo.com for a paid API.'
         },
         cacheTTL: {
           type: 'number',
           title: 'Cache TTL (minutes)',
           default: 10,
-          description: 'How long to cache weather data before fetching fresh data.'
+          description:
+            'How long to cache weather data before fetching fresh data.'
         }
       }
     }

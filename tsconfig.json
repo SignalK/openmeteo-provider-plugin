@@ -11,7 +11,7 @@
       "composite": true,
       "rootDir": "src",
       "sourceMap": false,
-      "skipLibCheck": true
+      "skipLibCheck": false
     },
     "include": ["./src/**/*", "./src/openApi.json"],
     "exclude": ["node_modules", "plugin"],
