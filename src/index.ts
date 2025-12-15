@@ -19,6 +19,12 @@ const CONFIG_SCHEMA = {
           title: 'API Key (optional)',
           default: '',
           description: 'Leave blank for free personal use. Go to https://open-meteo.com for a paid API.'
+        },
+        cacheTTL: {
+          type: 'number',
+          title: 'Cache TTL (minutes)',
+          default: 10,
+          description: 'How long to cache weather data before fetching fresh data.'
         }
       }
     }
@@ -47,7 +53,8 @@ module.exports = (server: OpenMeteoProviderApp): Plugin => {
   // ** default configuration settings
   let settings: SETTINGS = {
     weather: {
-      apiKey: ''
+      apiKey: '',
+      cacheTTL: 10
     }
   }
 
@@ -82,9 +89,11 @@ module.exports = (server: OpenMeteoProviderApp): Plugin => {
       }
 
       settings.weather = options.weather ?? {
-        apiKey: ''
+        apiKey: '',
+        cacheTTL: 10
       }
       settings.weather.apiKey = options.weather.apiKey ?? ''
+      settings.weather.cacheTTL = options.weather.cacheTTL ?? 10
 
       server.debug(`Applied config: ${JSON.stringify(settings)}`)
 

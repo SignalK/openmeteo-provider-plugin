@@ -8,6 +8,7 @@ import {
 
 export interface WEATHER_CONFIG {
   apiKey?: string
+  cacheTTL?: number // cache time-to-live in minutes
 }
 
 const weatherServiceName = 'OpenMeteo'

@@ -10,6 +10,11 @@ import { Convert } from '../lib/convert'
 
 import { WEATHER_CONFIG } from './weather-service'
 
+interface CacheEntry {
+  data: OMServiceResponse
+  timestamp: number
+}
+
 interface OMServiceResponse {
   latitude: number
   longitude: number
@@ -154,9 +159,32 @@ const WMO_CODE: any = {
 export class OpenMeteo {
   private settings: WEATHER_CONFIG
   private precision = 5 // geohash precision (5x5 km)
+  private cache: Map<string, CacheEntry> = new Map()
+  private cacheTTL: number // milliseconds
 
   constructor(config: WEATHER_CONFIG) {
     this.settings = config
+    this.cacheTTL = (config.cacheTTL ?? 10) * 60 * 1000 // default 10 minutes
+  }
+
+  private getCacheKey(position: Position, type: string, maxCount?: number): string {
+    const hash = Convert.geohash(position.latitude, position.longitude, this.precision)
+    return `${hash}:${type}:${maxCount ?? 'default'}`
+  }
+
+  private getFromCache(key: string): OMServiceResponse | null {
+    const entry = this.cache.get(key)
+    if (entry && Date.now() - entry.timestamp < this.cacheTTL) {
+      return entry.data
+    }
+    if (entry) {
+      this.cache.delete(key) // expired
+    }
+    return null
+  }
+
+  private setCache(key: string, data: OMServiceResponse): void {
+    this.cache.set(key, { data, timestamp: Date.now() })
   }
 
   private getApiKeyParam(): string {
@@ -242,9 +270,12 @@ export class OpenMeteo {
       ]
     }
 
-    const forecastPeriod = `&forecast_days=${
-      options?.maxCount ?? 5
-    }&forecast_hours=${options?.maxCount ?? 8}`
+    let forecastPeriod = ''
+    if (type === 'hourly') {
+      forecastPeriod = `&forecast_hours=${options?.maxCount ?? 24}`
+    } else if (type === 'daily') {
+      forecastPeriod = `&forecast_days=${options?.maxCount ?? 5}`
+    }
     const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
     const url = `https://api.open-meteo.com/v1/forecast?timeformat=unixtime&cell_selection=sea&wind_speed_unit=ms`
     let urlParam: string
@@ -305,10 +336,17 @@ export class OpenMeteo {
     options?: WeatherReqParams
   ): Promise<WeatherData[]> => {
     try {
-      //const murl = this.getMarineUrl(position, options)
-      //const mData = await this.fetchFromService(murl)
+      const cacheKey = this.getCacheKey(position, 'current', options?.maxCount)
+      const cached = this.getFromCache(cacheKey)
+      if (cached) {
+        return this.parseCurrent(cached)
+      }
+
       const url = this.getUrl(position, 'current', options)
       const wData = await this.fetchFromService(url)
+      if (wData) {
+        this.setCache(cacheKey, wData)
+      }
       return this.parseCurrent(wData)
     } catch (err) {
       throw new Error(`fetching / parsing weather data!`)
@@ -328,8 +366,17 @@ export class OpenMeteo {
   ): Promise<WeatherData[]> => {
     const omType = type === 'point' ? 'hourly' : 'daily'
     try {
+      const cacheKey = this.getCacheKey(position, omType, options?.maxCount)
+      const cached = this.getFromCache(cacheKey)
+      if (cached) {
+        return this.parseForecasts(cached)
+      }
+
       const url = this.getUrl(position, omType, options)
       const wData = await this.fetchFromService(url)
+      if (wData) {
+        this.setCache(cacheKey, wData)
+      }
       return this.parseForecasts(wData)
     } catch (err) {
       throw new Error(`fetching / parsing weather data!`)
@@ -343,8 +390,8 @@ export class OpenMeteo {
       const observations = omData.current
       const obs: WeatherData = {
         date: new Date(Convert.fromUnixTime(observations.time)).toISOString(),
-        description: observations.weather_code
-          ? WMO_CODE[observations.weather_code]
+        description: observations.weather_code !== undefined
+          ? WMO_CODE[observations.weather_code] ?? ''
           : '',
         type: 'observation',
         outside: {
@@ -380,8 +427,8 @@ export class OpenMeteo {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'point',
-          description: forecasts.weather_code[i]
-            ? WMO_CODE[forecasts.weather_code[i]]
+          description: forecasts.weather_code[i] !== undefined
+            ? WMO_CODE[forecasts.weather_code[i]] ?? ''
             : '',
           outside: {
             feelsLikeTemperature:
@@ -428,8 +475,8 @@ export class OpenMeteo {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
-          description: forecasts.weather_code[i]
-            ? WMO_CODE[forecasts.weather_code[i]]
+          description: forecasts.weather_code[i] !== undefined
+            ? WMO_CODE[forecasts.weather_code[i]] ?? ''
             : '',
           outside: {
             minTemperature:
