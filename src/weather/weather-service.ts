@@ -7,7 +7,7 @@ import {
 } from '@signalk/server-api'
 
 export interface WEATHER_CONFIG {
-  apiKey: string
+  apiKey?: string
 }
 
 const weatherServiceName = 'OpenMeteo'

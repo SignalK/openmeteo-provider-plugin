@@ -159,6 +159,10 @@ export class OpenMeteo {
     this.settings = config
   }
 
+  private getApiKeyParam(): string {
+    return this.settings.apiKey ? `&apikey=${this.settings.apiKey}` : ''
+  }
+
   private getMarineUrl(position: Position, options?: WeatherReqParams): string {
     if (!position) {
       return ''
@@ -178,7 +182,7 @@ export class OpenMeteo {
     const urlParam = `&hourly=${params.toString()}${forecastPeriod}`
     const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
     const url = `https://marine-api.open-meteo.com/v1/marine?timeformat=unixtime&wind_speed_unit=ms`
-    return `${url}${pos}${urlParam}`
+    return `${url}${pos}${urlParam}${this.getApiKeyParam()}`
   }
 
   private getUrl(
@@ -256,7 +260,7 @@ export class OpenMeteo {
         'daily'
       ].toString()}&current=${params['current'].toString()}${forecastPeriod}`
     }
-    return `${url}${pos}${urlParam}`
+    return `${url}${pos}${urlParam}${this.getApiKeyParam()}`
   }
 
   /**
