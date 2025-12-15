@@ -18,7 +18,7 @@ const CONFIG_SCHEMA = {
           type: 'string',
           title: 'API Key (optional)',
           default: '',
-          description: 'Leave blank for free personal use. Get an API key at https://open-meteo.com for commercial use or higher rate limits.'
+          description: 'Leave blank for free personal use. Go to https://open-meteo.com for a paid API.'
         }
       }
     }
