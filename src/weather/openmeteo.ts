@@ -214,7 +214,9 @@ export class OpenMeteo {
       'swell_wave_peak_period'
     ]
 
-    const forecastPeriod = `&forecast_hours=${options?.maxCount ?? 8}` //&forecast_days=${options?.maxCount ?? 5}`
+    // Default matches the hourly forecast horizon (getUrl) so waves cover the
+    // same hours rather than truncating to the marine API's shorter default.
+    const forecastPeriod = `&forecast_hours=${options?.maxCount ?? 24}`
     const urlParam = `&hourly=${params.toString()}${forecastPeriod}`
     const pos = `&latitude=${position.latitude}&longitude=${position.longitude}`
     const url = `https://marine-api.open-meteo.com/v1/marine?timeformat=unixtime&wind_speed_unit=ms`
@@ -383,6 +385,28 @@ export class OpenMeteo {
 
       const url = this.getUrl(position, omType, options)
       const wData = await this.fetchFromService(url)
+
+      // Open-Meteo serves waves / swell from a separate marine API, so merge the
+      // marine hourly series into the forecast response and parseForecasts can
+      // then populate water.*. Hourly ('point') forecasts only. Marine data is
+      // optional: a marine failure must not drop the atmospheric forecast.
+      if (wData && omType === 'hourly') {
+        try {
+          const marine = await this.fetchFromService(
+            this.getMarineUrl(position, options)
+          )
+          if (marine?.hourly) {
+            wData.hourly = { ...wData.hourly, ...marine.hourly }
+            wData.hourly_units = {
+              ...wData.hourly_units,
+              ...marine.hourly_units
+            }
+          }
+        } catch (err) {
+          console.log('** open-meteo marine fetch error!', err)
+        }
+      }
+
       if (wData) {
         this.setCache(cacheKey, wData)
       }
@@ -455,21 +479,23 @@ export class OpenMeteo {
               Convert.toRatio(forecasts.relative_humidity_2m[i]) ?? null,
             horizontalVisibility: forecasts.visibility[i] ?? null
           },
-          /*water: {
-            swellHeight: forecasts.swell_wave_height[i] ?? null,
-            swellDirection:
-              Convert.degreesToRadians(forecasts.swell_wave_direction[i]) ??
-              null,
-            swellPeriod: forecasts.swell_wave_period[i]
-              ? forecasts.swell_wave_period[i] * 1000
-              : undefined,
-            waveSignificantHeight: forecasts.wave_height[i] ?? null,
-            waveDirection:
-              Convert.degreesToRadians(forecasts.wave_direction[i]) ?? null,
-            wavePeriod: forecasts.wave_period[i]
-              ? forecasts.wave_period[i] * 1000
-              : undefined
-          },*/
+          // Populated when the marine series was merged in (fetchForecasts);
+          // omitted otherwise. Periods are seconds (SI), directions radians.
+          water: forecasts.wave_height
+            ? {
+                waveSignificantHeight: forecasts.wave_height?.[i] ?? null,
+                waveDirection:
+                  Convert.degreesToRadians(forecasts.wave_direction?.[i]) ??
+                  null,
+                wavePeriod: forecasts.wave_period?.[i] ?? null,
+                swellHeight: forecasts.swell_wave_height?.[i] ?? null,
+                swellDirection:
+                  Convert.degreesToRadians(
+                    forecasts.swell_wave_direction?.[i]
+                  ) ?? null,
+                swellPeriod: forecasts.swell_wave_period?.[i] ?? null
+              }
+            : undefined,
           wind: {
             speedTrue: forecasts.wind_speed_10m[i] ?? null,
             directionTrue:
