@@ -359,7 +359,7 @@ export class OpenMeteo {
         this.setCache(cacheKey, wData)
       }
       return this.parseCurrent(wData)
-    } catch (err) {
+    } catch {
       throw new Error(`fetching / parsing weather data!`)
     }
   }
@@ -411,7 +411,7 @@ export class OpenMeteo {
         this.setCache(cacheKey, wData)
       }
       return this.parseForecasts(wData)
-    } catch (err) {
+    } catch {
       throw new Error(`fetching / parsing weather data!`)
     }
   }

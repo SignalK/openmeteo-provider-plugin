@@ -24,7 +24,7 @@ const providerRegistration = {
       try {
         const r = await weatherService.fetchObservations(position, options)
         return r
-      } catch (err) {
+      } catch {
         throw new Error('Error fetching observation data from provider!')
       }
     },
@@ -36,7 +36,7 @@ const providerRegistration = {
       try {
         const r = await weatherService.fetchForecasts(position, type, options)
         return r
-      } catch (err) {
+      } catch {
         throw new Error('Error fetching observation data from provider!')
       }
     },
