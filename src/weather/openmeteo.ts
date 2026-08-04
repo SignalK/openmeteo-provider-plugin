@@ -10,6 +10,18 @@ import { Convert } from '../lib/convert'
 
 import { WEATHER_CONFIG } from './weather-service'
 
+// Signal K's own WeatherData['outside'] (@signalk/server-api) has no
+// percentage/probability field at all -- only precipitationVolume (an
+// amount, e.g. mm) and precipitationType (a category). This adds Open-
+// Meteo's own precipitation_probability_max as a non-standard extra key
+// on daily forecast entries only: harmless for any other Weather API
+// consumer to ignore (it's just an unrecognized extra JSON property), and
+// specifically what feeds a "rain chance %" display that has no better
+// spec-defined field to read from otherwise (requested directly).
+type DailyOutsideWithRainChance = NonNullable<WeatherData['outside']> & {
+  precipitationProbability?: number
+}
+
 interface CacheEntry {
   data: OMServiceResponse
   timestamp: number
@@ -104,6 +116,7 @@ interface OMServiceResponse {
     uv_index_max: string
     uv_index_clear_sky_max: string
     weather_code: string
+    precipitation_probability_max: string
     wind_speed_10m_max: string
     wind_direction_10m_dominant: string
     wind_gusts_10m_max: string
@@ -118,6 +131,7 @@ interface OMServiceResponse {
     uv_index_max: Array<number>
     uv_index_clear_sky_max: Array<number>
     weather_code: Array<number>
+    precipitation_probability_max: Array<number>
     wind_speed_10m_max: Array<number>
     wind_direction_10m_dominant: Array<number>
     wind_gusts_10m_max: Array<number>
@@ -274,6 +288,7 @@ export class OpenMeteo {
         'uv_index_max',
         'uv_index_clear_sky_max',
         'weather_code',
+        'precipitation_probability_max',
         'wind_speed_10m_max',
         'wind_direction_10m_dominant',
         'wind_gusts_10m_max'
@@ -697,18 +712,21 @@ export class OpenMeteo {
         ? this.computeDailyModeCodes(forecasts, hourlyForBlending)
         : forecasts.weather_code
       for (let i = 0; i < forecasts.time.length; ++i) {
+        const outside: DailyOutsideWithRainChance = {
+          minTemperature:
+            Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
+          maxTemperature:
+            Convert.celciusToKelvin(forecasts.temperature_2m_max[i]) ?? null,
+          uvIndex: forecasts.uv_index_max[i] ?? null,
+          precipitationProbability:
+            forecasts.precipitation_probability_max?.[i] ?? undefined
+        }
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
           description:
             dailyCodes[i] !== undefined ? WMO_CODE[dailyCodes[i]] ?? '' : '',
-          outside: {
-            minTemperature:
-              Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
-            maxTemperature:
-              Convert.celciusToKelvin(forecasts.temperature_2m_max[i]) ?? null,
-            uvIndex: forecasts.uv_index_max[i] ?? null
-          },
+          outside,
           wind: {
             speedTrue: forecasts.wind_speed_10m_max[i] ?? null,
             directionTrue:
