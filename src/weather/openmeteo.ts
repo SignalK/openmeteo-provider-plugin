@@ -378,42 +378,134 @@ export class OpenMeteo {
     const omType = type === 'point' ? 'hourly' : 'daily'
     try {
       const cacheKey = this.getCacheKey(position, omType, options?.maxCount)
-      const cached = this.getFromCache(cacheKey)
-      if (cached) {
-        return this.parseForecasts(cached)
-      }
+      let wData = this.getFromCache(cacheKey)
 
-      const url = this.getUrl(position, omType, options)
-      const wData = await this.fetchFromService(url)
+      if (!wData) {
+        const url = this.getUrl(position, omType, options)
+        wData = await this.fetchFromService(url)
 
-      // Open-Meteo serves waves / swell from a separate marine API, so merge the
-      // marine hourly series into the forecast response and parseForecasts can
-      // then populate water.*. Hourly ('point') forecasts only. Marine data is
-      // optional: a marine failure must not drop the atmospheric forecast.
-      if (wData && omType === 'hourly') {
-        try {
-          const marine = await this.fetchFromService(
-            this.getMarineUrl(position, options)
-          )
-          if (marine?.hourly) {
-            wData.hourly = { ...wData.hourly, ...marine.hourly }
-            wData.hourly_units = {
-              ...wData.hourly_units,
-              ...marine.hourly_units
+        // Open-Meteo serves waves / swell from a separate marine API, so merge the
+        // marine hourly series into the forecast response and parseForecasts can
+        // then populate water.*. Hourly ('point') forecasts only. Marine data is
+        // optional: a marine failure must not drop the atmospheric forecast.
+        if (wData && omType === 'hourly') {
+          try {
+            const marine = await this.fetchFromService(
+              this.getMarineUrl(position, options)
+            )
+            if (marine?.hourly) {
+              wData.hourly = { ...wData.hourly, ...marine.hourly }
+              wData.hourly_units = {
+                ...wData.hourly_units,
+                ...marine.hourly_units
+              }
             }
+          } catch (err) {
+            console.log('** open-meteo marine fetch error!', err)
           }
-        } catch (err) {
-          console.log('** open-meteo marine fetch error!', err)
+        }
+
+        if (wData) {
+          this.setCache(cacheKey, wData)
         }
       }
 
-      if (wData) {
-        this.setCache(cacheKey, wData)
+      // Open-Meteo's own daily.weather_code is a "worst hour of the day
+      // wins" aggregate -- confirmed against live data to be persistently
+      // gloomier than e.g. the Met Office's own post-processed forecast for
+      // the same days. Blend a better per-day symbol from the full 24h of
+      // the hourly series instead -- see computeDailyModeCodes() (day, not
+      // just daylight: overnight rain/wind matters as much as daytime for
+      // a boat, and the symbol set has non-sun icons for it regardless).
+      // fetchHourlySeries() shares this same cache (keyed the same way a
+      // direct 'point' request for the same hour count would be), so this
+      // costs one extra upstream call per cacheTTL window total, not one
+      // per requesting device.
+      let hourlyForBlending: OMServiceResponse['hourly'] | undefined
+      if (omType === 'daily' && wData?.daily?.time?.length) {
+        const days = options?.maxCount ?? 5
+        const hourlySeries = await this.fetchHourlySeries(position, days * 24)
+        hourlyForBlending = hourlySeries?.hourly
       }
-      return this.parseForecasts(wData)
+
+      return this.parseForecasts(wData as OMServiceResponse, hourlyForBlending)
     } catch {
       throw new Error(`fetching / parsing weather data!`)
     }
+  }
+
+  /**
+   * Fetches (or reuses from cache) `hours` of hourly data for position,
+   * purely to feed computeDailyModeCodes() -- deliberately shares the
+   * same cache key a direct 'point' forecast request for the same hour
+   * count would use, same reasoning as getCacheKey()'s own position-keyed
+   * (not per-device) design: 5-6 devices on the same boat asking for a
+   * daily forecast within the same cacheTTL window cost one upstream
+   * Open-Meteo call for this, not one per device.
+   */
+  private fetchHourlySeries = async (
+    position: Position,
+    hours: number
+  ): Promise<OMServiceResponse | undefined> => {
+    const cacheKey = this.getCacheKey(position, 'hourly', hours)
+    const cached = this.getFromCache(cacheKey)
+    if (cached) {
+      return cached
+    }
+    const url = this.getUrl(position, 'hourly', { maxCount: hours })
+    const wData = await this.fetchFromService(url)
+    if (wData) {
+      this.setCache(cacheKey, wData)
+    }
+    return wData
+  }
+
+  /**
+   * Per daily.time[i] (that day's UTC midnight -- getUrl() never sets
+   * &timezone=, so Open-Meteo defaults to GMT for both the daily and
+   * hourly series, keeping them on the same epoch-seconds basis here), the
+   * mode (most frequent) weather_code among hourly's samples falling in
+   * that full 24h calendar day -- see fetchForecasts()'s own comment for
+   * why this replaces Open-Meteo's own daily.weather_code, and why it's
+   * the full day rather than just daylight hours. Ties broken toward the
+   * milder (lower) WMO code. A day with no matching hourly samples (e.g.
+   * past the end of a shorter hourly fetch) falls back to Open-Meteo's own
+   * daily code for that one day only.
+   */
+  private computeDailyModeCodes(
+    daily: OMServiceResponse['daily'],
+    hourly: OMServiceResponse['hourly']
+  ): number[] {
+    const SECONDS_PER_DAY = 86400
+    return daily.time.map((dayStart, i) => {
+      const dayEnd = dayStart + SECONDS_PER_DAY
+      const dayCodes: number[] = []
+      for (let h = 0; h < hourly.time.length; h++) {
+        const t = hourly.time[h]
+        if (t >= dayStart && t < dayEnd) {
+          dayCodes.push(hourly.weather_code[h])
+        }
+      }
+      return dayCodes.length > 0
+        ? this.modeWeatherCode(dayCodes)
+        : daily.weather_code[i]
+    })
+  }
+
+  private modeWeatherCode(codes: number[]): number {
+    const counts = new Map<number, number>()
+    for (const code of codes) {
+      counts.set(code, (counts.get(code) ?? 0) + 1)
+    }
+    let best = codes[0]
+    let bestCount = 0
+    for (const [code, count] of counts) {
+      if (count > bestCount || (count === bestCount && code < best)) {
+        best = code
+        bestCount = count
+      }
+    }
+    return best
   }
 
   private parseCurrent(omData: OMServiceResponse): WeatherData[] {
@@ -453,7 +545,10 @@ export class OpenMeteo {
     return data
   }
 
-  private parseForecasts(omData: OMServiceResponse): WeatherData[] {
+  private parseForecasts(
+    omData: OMServiceResponse,
+    hourlyForBlending?: OMServiceResponse['hourly']
+  ): WeatherData[] {
     const data: WeatherData[] = []
     if (omData && omData.hourly?.time && Array.isArray(omData.hourly.time)) {
       const forecasts = omData.hourly
@@ -508,14 +603,18 @@ export class OpenMeteo {
     }
     if (omData && omData.daily?.time && Array.isArray(omData.daily.time)) {
       const forecasts = omData.daily
+      // See fetchForecasts()'s own comment: prefer the full-day mode code
+      // over Open-Meteo's own (gloomier) daily aggregate whenever the
+      // hourly series needed to compute it was actually available.
+      const dailyCodes = hourlyForBlending
+        ? this.computeDailyModeCodes(forecasts, hourlyForBlending)
+        : forecasts.weather_code
       for (let i = 0; i < forecasts.time.length; ++i) {
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
           description:
-            forecasts.weather_code[i] !== undefined
-              ? WMO_CODE[forecasts.weather_code[i]] ?? ''
-              : '',
+            dailyCodes[i] !== undefined ? WMO_CODE[dailyCodes[i]] ?? '' : '',
           outside: {
             minTemperature:
               Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
