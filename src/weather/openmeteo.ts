@@ -460,17 +460,70 @@ export class OpenMeteo {
     return wData
   }
 
+  // A precip-type WMO code present for less than this many *consecutive*
+  // hours is "showery" (case 3 below); this many or more in a row makes it
+  // a "wet day" (case 4). Deliberately a run length, not a fraction of the
+  // day's total precip hours (requested directly): three separate 2-hour
+  // showers spread across a day reads as showery even though they'd sum to
+  // 6 hours total, whereas one unbroken 6-hour band of rain reads as wet.
+  private static readonly CONTINUOUS_PRECIP_RUN_HOURS = 6
+
+  private static readonly THUNDERSTORM_CODES = new Set([95, 96, 99])
+
+  // Rain/drizzle/freezing-rain-family and snow-family WMO codes that are
+  // NOT already one of the "showers" codes (80-82, 85-86) -- i.e. Open-
+  // Meteo's own hourly model called this hour's precip "continuous" rather
+  // than showery. Thunderstorm (95/96/99) is deliberately excluded: it's
+  // handled separately below and always wins the day regardless of how
+  // many hours it covers, same as most weather apps treat storms as
+  // always-notable rather than duration-gated.
+  private static readonly CONTINUOUS_TO_SHOWERS_CODE: Record<number, number> =
+    {
+      51: 80, // Drizzle: Light -> Rain showers: Slight
+      53: 80, // Drizzle: Moderate -> Rain showers: Slight
+      55: 81, // Drizzle: Dense intensity -> Rain showers: Moderate
+      56: 80, // Freezing Drizzle: Light -> Rain showers: Slight
+      57: 81, // Freezing Drizzle: Dense intensity -> Rain showers: Moderate
+      61: 80, // Rain: Slight -> Rain showers: Slight
+      63: 81, // Rain: Moderate -> Rain showers: Moderate
+      65: 82, // Rain: Heavy intensity -> Rain showers: Violent
+      66: 80, // Freezing Rain: Light -> Rain showers: Slight
+      67: 82, // Freezing Rain: Heavy intensity -> Rain showers: Violent
+      71: 85, // Snow fall: Slight -> Snow showers: Slight
+      73: 85, // Snow fall: Moderate -> Snow showers: Slight
+      75: 86, // Snow fall: Heavy intensity -> Snow showers: Heavy
+      77: 85 // Snow grains -> Snow showers: Slight
+    }
+
+  private isPrecipCode(code: number): boolean {
+    return (
+      code in OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE ||
+      [80, 81, 82, 85, 86].includes(code)
+    )
+  }
+
   /**
    * Per daily.time[i] (that day's UTC midnight -- getUrl() never sets
    * &timezone=, so Open-Meteo defaults to GMT for both the daily and
-   * hourly series, keeping them on the same epoch-seconds basis here), the
-   * mode (most frequent) weather_code among hourly's samples falling in
-   * that full 24h calendar day -- see fetchForecasts()'s own comment for
-   * why this replaces Open-Meteo's own daily.weather_code, and why it's
-   * the full day rather than just daylight hours. Ties broken toward the
-   * milder (lower) WMO code. A day with no matching hourly samples (e.g.
-   * past the end of a shorter hourly fetch) falls back to Open-Meteo's own
-   * daily code for that one day only.
+   * hourly series, keeping them on the same epoch-seconds basis here), a
+   * representative weather_code for the full 24h calendar day, in place of
+   * Open-Meteo's own gloomier daily.weather_code (see fetchForecasts()'s
+   * own comment) -- and, critically, in place of a plain hourly mode too:
+   * a straight mode of e.g. 15h overcast + 4h drizzle silently drops the
+   * drizzle entirely, which matters as much as the cloud cover for a boat
+   * (requested directly). Priority, per day:
+   *   1. Any thunderstorm hour (95/96/99) -- always wins, worst hail
+   *      severity first, regardless of how many hours it covers.
+   *   2. A precip run of CONTINUOUS_PRECIP_RUN_HOURS+ consecutive hours --
+   *      a genuinely wet day: the mode of just its precip-hour codes.
+   *   3. Any shorter/scattered precip -- a showery day: the mode of its
+   *      precip-hour codes, mapped through CONTINUOUS_TO_SHOWERS_CODE so
+   *      the symbol keeps its sun (e.g. "Rain: Slight" -> "Rain showers:
+   *      Slight") rather than reading as an all-day downpour.
+   *   4. No precip hours at all -- the mode of the day's (sky-only) codes,
+   *      same as before.
+   * A day with no matching hourly samples at all (e.g. past the end of a
+   * shorter hourly fetch) falls back to Open-Meteo's own daily code.
    */
   private computeDailyModeCodes(
     daily: OMServiceResponse['daily'],
@@ -486,10 +539,44 @@ export class OpenMeteo {
           dayCodes.push(hourly.weather_code[h])
         }
       }
-      return dayCodes.length > 0
-        ? this.modeWeatherCode(dayCodes)
-        : daily.weather_code[i]
+      if (dayCodes.length === 0) {
+        return daily.weather_code[i]
+      }
+
+      const stormCodes = dayCodes.filter((c) =>
+        OpenMeteo.THUNDERSTORM_CODES.has(c)
+      )
+      if (stormCodes.length > 0) {
+        return Math.max(...stormCodes) // 99 > 96 > 95: worst hail wins
+      }
+
+      const precipCodes = dayCodes.filter((c) => this.isPrecipCode(c))
+      if (precipCodes.length === 0) {
+        return this.modeWeatherCode(dayCodes)
+      }
+
+      const longestPrecipRun = this.longestConsecutiveRun(dayCodes, (c) =>
+        this.isPrecipCode(c)
+      )
+      const representative = this.modeWeatherCode(precipCodes)
+      return longestPrecipRun >= OpenMeteo.CONTINUOUS_PRECIP_RUN_HOURS
+        ? representative
+        : OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE[representative] ??
+            representative
     })
+  }
+
+  private longestConsecutiveRun(
+    codes: number[],
+    predicate: (code: number) => boolean
+  ): number {
+    let longest = 0
+    let current = 0
+    for (const code of codes) {
+      current = predicate(code) ? current + 1 : 0
+      longest = Math.max(longest, current)
+    }
+    return longest
   }
 
   private modeWeatherCode(codes: number[]): number {
