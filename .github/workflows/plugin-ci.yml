@@ -1,0 +1,17 @@
+name: SignalK Plugin CI
+
+# Cross-platform plugin test via SignalK's reusable workflow (Linux x64/arm64,
+# macOS, Windows, armv7/Venus OS). Running it earns the registry's plugin-ci
+# credit (worth +10 on the 0-100 score; its absence is a flat -10 penalty).
+#
+# Pinned to a signalk-server RELEASE COMMIT, not @master, for supply-chain
+# safety and reproducibility.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  plugin-ci:
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@3645160b235364e1fd3afe1f2f6b2270b8194b7d # v2.28.0
