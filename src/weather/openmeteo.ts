@@ -321,34 +321,29 @@ export class OpenMeteo {
 
   /**
    * Fetch weather data from the weather service.
-   *  @params position: {latitude, longitude}
+   * Returns undefined on failure so error responses are never
+   * treated (or cached) as weather data.
+   *  @params url: service request url
    */
   private fetchFromService = async (
     url: string
-  ): Promise<OMServiceResponse> => {
-    let forecastRes!: OMServiceResponse
+  ): Promise<OMServiceResponse | undefined> => {
     try {
       const res = await fetch(url)
-
-      forecastRes = await res.json()
-
-      /*url = this.getUrl(position, 'marine')
-      res = await fetch(url)
-      const marineRes = await res.json()
-
-      const h = Object.assign({}, forecastRes.hourly, marineRes.hourly)
-      const hu = Object.assign(
-        {},
-        forecastRes.hourly_units,
-        marineRes.hourly_units
-      )*/
-
-      //forecastRes.hourly_units = hu
-      //forecastRes.hourly = h
-      return forecastRes
+      const data = await res.json()
+      // Open-Meteo signals failures (e.g. rate limiting) with an error body.
+      if (!res.ok || (data as { error?: boolean }).error) {
+        console.log(
+          '** open-meteo request failed!',
+          res.status,
+          (data as { reason?: string }).reason ?? ''
+        )
+        return undefined
+      }
+      return data as OMServiceResponse
     } catch (err) {
       console.log('** open-meteo fetch error!', err)
-      return forecastRes
+      return undefined
     }
   }
 
@@ -393,7 +388,8 @@ export class OpenMeteo {
     const omType = type === 'point' ? 'hourly' : 'daily'
     try {
       const cacheKey = this.getCacheKey(position, omType, options?.maxCount)
-      let wData = this.getFromCache(cacheKey)
+      let wData: OMServiceResponse | undefined =
+        this.getFromCache(cacheKey) ?? undefined
 
       if (!wData) {
         const url = this.getUrl(position, omType, options)
@@ -443,7 +439,7 @@ export class OpenMeteo {
         hourlyForBlending = hourlySeries?.hourly
       }
 
-      return this.parseForecasts(wData as OMServiceResponse, hourlyForBlending)
+      return this.parseForecasts(wData, hourlyForBlending)
     } catch {
       throw new Error(`fetching / parsing weather data!`)
     }
@@ -610,10 +606,10 @@ export class OpenMeteo {
     return best
   }
 
-  private parseCurrent(omData: OMServiceResponse): WeatherData[] {
+  private parseCurrent(omData: OMServiceResponse | undefined): WeatherData[] {
     const data: WeatherData[] = []
 
-    if (omData && typeof omData.current.time !== 'undefined') {
+    if (omData && typeof omData.current?.time !== 'undefined') {
       const observations = omData.current
       const obs: WeatherData = {
         date: new Date(Convert.fromUnixTime(observations.time)).toISOString(),
@@ -648,7 +644,7 @@ export class OpenMeteo {
   }
 
   private parseForecasts(
-    omData: OMServiceResponse,
+    omData: OMServiceResponse | undefined,
     hourlyForBlending?: OMServiceResponse['hourly']
   ): WeatherData[] {
     const data: WeatherData[] = []
