@@ -10,6 +10,18 @@ import { Convert } from '../lib/convert'
 
 import { WEATHER_CONFIG } from './weather-service'
 
+// Signal K's own WeatherData['outside'] (@signalk/server-api) has no
+// percentage/probability field at all -- only precipitationVolume (an
+// amount, e.g. mm) and precipitationType (a category). This adds Open-
+// Meteo's own precipitation_probability_max as a non-standard extra key
+// on daily forecast entries only: harmless for any other Weather API
+// consumer to ignore (it's just an unrecognized extra JSON property), and
+// specifically what feeds a "rain chance %" display that has no better
+// spec-defined field to read from otherwise (requested directly).
+type DailyOutsideWithRainChance = NonNullable<WeatherData['outside']> & {
+  precipitationProbability?: number
+}
+
 interface CacheEntry {
   data: OMServiceResponse
   timestamp: number
@@ -104,6 +116,7 @@ interface OMServiceResponse {
     uv_index_max: string
     uv_index_clear_sky_max: string
     weather_code: string
+    precipitation_probability_max: string
     wind_speed_10m_max: string
     wind_direction_10m_dominant: string
     wind_gusts_10m_max: string
@@ -118,6 +131,7 @@ interface OMServiceResponse {
     uv_index_max: Array<number>
     uv_index_clear_sky_max: Array<number>
     weather_code: Array<number>
+    precipitation_probability_max: Array<number>
     wind_speed_10m_max: Array<number>
     wind_direction_10m_dominant: Array<number>
     wind_gusts_10m_max: Array<number>
@@ -274,6 +288,7 @@ export class OpenMeteo {
         'uv_index_max',
         'uv_index_clear_sky_max',
         'weather_code',
+        'precipitation_probability_max',
         'wind_speed_10m_max',
         'wind_direction_10m_dominant',
         'wind_gusts_10m_max'
@@ -373,42 +388,222 @@ export class OpenMeteo {
     const omType = type === 'point' ? 'hourly' : 'daily'
     try {
       const cacheKey = this.getCacheKey(position, omType, options?.maxCount)
-      const cached = this.getFromCache(cacheKey)
-      if (cached) {
-        return this.parseForecasts(cached)
-      }
+      let wData: OMServiceResponse | undefined =
+        this.getFromCache(cacheKey) ?? undefined
 
-      const url = this.getUrl(position, omType, options)
-      const wData = await this.fetchFromService(url)
+      if (!wData) {
+        const url = this.getUrl(position, omType, options)
+        wData = await this.fetchFromService(url)
 
-      // Open-Meteo serves waves / swell from a separate marine API, so merge the
-      // marine hourly series into the forecast response and parseForecasts can
-      // then populate water.*. Hourly ('point') forecasts only. Marine data is
-      // optional: a marine failure must not drop the atmospheric forecast.
-      if (wData && omType === 'hourly') {
-        try {
-          const marine = await this.fetchFromService(
-            this.getMarineUrl(position, options)
-          )
-          if (marine?.hourly) {
-            wData.hourly = { ...wData.hourly, ...marine.hourly }
-            wData.hourly_units = {
-              ...wData.hourly_units,
-              ...marine.hourly_units
+        // Open-Meteo serves waves / swell from a separate marine API, so merge the
+        // marine hourly series into the forecast response and parseForecasts can
+        // then populate water.*. Hourly ('point') forecasts only. Marine data is
+        // optional: a marine failure must not drop the atmospheric forecast.
+        if (wData && omType === 'hourly') {
+          try {
+            const marine = await this.fetchFromService(
+              this.getMarineUrl(position, options)
+            )
+            if (marine?.hourly) {
+              wData.hourly = { ...wData.hourly, ...marine.hourly }
+              wData.hourly_units = {
+                ...wData.hourly_units,
+                ...marine.hourly_units
+              }
             }
+          } catch (err) {
+            console.log('** open-meteo marine fetch error!', err)
           }
-        } catch (err) {
-          console.log('** open-meteo marine fetch error!', err)
+        }
+
+        if (wData) {
+          this.setCache(cacheKey, wData)
         }
       }
 
-      if (wData) {
-        this.setCache(cacheKey, wData)
+      // Open-Meteo's own daily.weather_code is a "worst hour of the day
+      // wins" aggregate -- confirmed against live data to be persistently
+      // gloomier than e.g. the Met Office's own post-processed forecast for
+      // the same days. Blend a better per-day symbol from the full 24h of
+      // the hourly series instead -- see computeDailyModeCodes() (day, not
+      // just daylight: overnight rain/wind matters as much as daytime for
+      // a boat, and the symbol set has non-sun icons for it regardless).
+      // fetchHourlySeries() shares this same cache (keyed the same way a
+      // direct 'point' request for the same hour count would be), so this
+      // costs one extra upstream call per cacheTTL window total, not one
+      // per requesting device.
+      let hourlyForBlending: OMServiceResponse['hourly'] | undefined
+      if (omType === 'daily' && wData?.daily?.time?.length) {
+        const days = options?.maxCount ?? 5
+        const hourlySeries = await this.fetchHourlySeries(position, days * 24)
+        hourlyForBlending = hourlySeries?.hourly
       }
-      return this.parseForecasts(wData)
+
+      return this.parseForecasts(wData, hourlyForBlending)
     } catch {
       throw new Error(`fetching / parsing weather data!`)
     }
+  }
+
+  /**
+   * Fetches (or reuses from cache) `hours` of hourly data for position,
+   * purely to feed computeDailyModeCodes() -- deliberately shares the
+   * same cache key a direct 'point' forecast request for the same hour
+   * count would use, same reasoning as getCacheKey()'s own position-keyed
+   * (not per-device) design: 5-6 devices on the same boat asking for a
+   * daily forecast within the same cacheTTL window cost one upstream
+   * Open-Meteo call for this, not one per device.
+   */
+  private fetchHourlySeries = async (
+    position: Position,
+    hours: number
+  ): Promise<OMServiceResponse | undefined> => {
+    const cacheKey = this.getCacheKey(position, 'hourly', hours)
+    const cached = this.getFromCache(cacheKey)
+    if (cached) {
+      return cached
+    }
+    const url = this.getUrl(position, 'hourly', { maxCount: hours })
+    const wData = await this.fetchFromService(url)
+    if (wData) {
+      this.setCache(cacheKey, wData)
+    }
+    return wData
+  }
+
+  // A precip-type WMO code present for less than this many *consecutive*
+  // hours is "showery" (case 3 below); this many or more in a row makes it
+  // a "wet day" (case 4). Deliberately a run length, not a fraction of the
+  // day's total precip hours (requested directly): three separate 2-hour
+  // showers spread across a day reads as showery even though they'd sum to
+  // 6 hours total, whereas one unbroken 6-hour band of rain reads as wet.
+  private static readonly CONTINUOUS_PRECIP_RUN_HOURS = 6
+
+  private static readonly THUNDERSTORM_CODES = new Set([95, 96, 99])
+
+  // Rain/drizzle/freezing-rain-family and snow-family WMO codes that are
+  // NOT already one of the "showers" codes (80-82, 85-86) -- i.e. Open-
+  // Meteo's own hourly model called this hour's precip "continuous" rather
+  // than showery. Thunderstorm (95/96/99) is deliberately excluded: it's
+  // handled separately below and always wins the day regardless of how
+  // many hours it covers, same as most weather apps treat storms as
+  // always-notable rather than duration-gated.
+  private static readonly CONTINUOUS_TO_SHOWERS_CODE: Record<number, number> =
+    {
+      51: 80, // Drizzle: Light -> Rain showers: Slight
+      53: 80, // Drizzle: Moderate -> Rain showers: Slight
+      55: 81, // Drizzle: Dense intensity -> Rain showers: Moderate
+      56: 80, // Freezing Drizzle: Light -> Rain showers: Slight
+      57: 81, // Freezing Drizzle: Dense intensity -> Rain showers: Moderate
+      61: 80, // Rain: Slight -> Rain showers: Slight
+      63: 81, // Rain: Moderate -> Rain showers: Moderate
+      65: 82, // Rain: Heavy intensity -> Rain showers: Violent
+      66: 80, // Freezing Rain: Light -> Rain showers: Slight
+      67: 82, // Freezing Rain: Heavy intensity -> Rain showers: Violent
+      71: 85, // Snow fall: Slight -> Snow showers: Slight
+      73: 85, // Snow fall: Moderate -> Snow showers: Slight
+      75: 86, // Snow fall: Heavy intensity -> Snow showers: Heavy
+      77: 85 // Snow grains -> Snow showers: Slight
+    }
+
+  private isPrecipCode(code: number): boolean {
+    return (
+      code in OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE ||
+      [80, 81, 82, 85, 86].includes(code)
+    )
+  }
+
+  /**
+   * Per daily.time[i] (that day's UTC midnight -- getUrl() never sets
+   * &timezone=, so Open-Meteo defaults to GMT for both the daily and
+   * hourly series, keeping them on the same epoch-seconds basis here), a
+   * representative weather_code for the full 24h calendar day, in place of
+   * Open-Meteo's own gloomier daily.weather_code (see fetchForecasts()'s
+   * own comment) -- and, critically, in place of a plain hourly mode too:
+   * a straight mode of e.g. 15h overcast + 4h drizzle silently drops the
+   * drizzle entirely, which matters as much as the cloud cover for a boat
+   * (requested directly). Priority, per day:
+   *   1. Any thunderstorm hour (95/96/99) -- always wins, worst hail
+   *      severity first, regardless of how many hours it covers.
+   *   2. A precip run of CONTINUOUS_PRECIP_RUN_HOURS+ consecutive hours --
+   *      a genuinely wet day: the mode of just its precip-hour codes.
+   *   3. Any shorter/scattered precip -- a showery day: the mode of its
+   *      precip-hour codes, mapped through CONTINUOUS_TO_SHOWERS_CODE so
+   *      the symbol keeps its sun (e.g. "Rain: Slight" -> "Rain showers:
+   *      Slight") rather than reading as an all-day downpour.
+   *   4. No precip hours at all -- the mode of the day's (sky-only) codes,
+   *      same as before.
+   * A day with no matching hourly samples at all (e.g. past the end of a
+   * shorter hourly fetch) falls back to Open-Meteo's own daily code.
+   */
+  private computeDailyModeCodes(
+    daily: OMServiceResponse['daily'],
+    hourly: OMServiceResponse['hourly']
+  ): number[] {
+    const SECONDS_PER_DAY = 86400
+    return daily.time.map((dayStart, i) => {
+      const dayEnd = dayStart + SECONDS_PER_DAY
+      const dayCodes: number[] = []
+      for (let h = 0; h < hourly.time.length; h++) {
+        const t = hourly.time[h]
+        if (t >= dayStart && t < dayEnd) {
+          dayCodes.push(hourly.weather_code[h])
+        }
+      }
+      if (dayCodes.length === 0) {
+        return daily.weather_code[i]
+      }
+
+      const stormCodes = dayCodes.filter((c) =>
+        OpenMeteo.THUNDERSTORM_CODES.has(c)
+      )
+      if (stormCodes.length > 0) {
+        return Math.max(...stormCodes) // 99 > 96 > 95: worst hail wins
+      }
+
+      const precipCodes = dayCodes.filter((c) => this.isPrecipCode(c))
+      if (precipCodes.length === 0) {
+        return this.modeWeatherCode(dayCodes)
+      }
+
+      const longestPrecipRun = this.longestConsecutiveRun(dayCodes, (c) =>
+        this.isPrecipCode(c)
+      )
+      const representative = this.modeWeatherCode(precipCodes)
+      return longestPrecipRun >= OpenMeteo.CONTINUOUS_PRECIP_RUN_HOURS
+        ? representative
+        : OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE[representative] ??
+            representative
+    })
+  }
+
+  private longestConsecutiveRun(
+    codes: number[],
+    predicate: (code: number) => boolean
+  ): number {
+    let longest = 0
+    let current = 0
+    for (const code of codes) {
+      current = predicate(code) ? current + 1 : 0
+      longest = Math.max(longest, current)
+    }
+    return longest
+  }
+
+  private modeWeatherCode(codes: number[]): number {
+    const counts = new Map<number, number>()
+    for (const code of codes) {
+      counts.set(code, (counts.get(code) ?? 0) + 1)
+    }
+    let best = codes[0]
+    let bestCount = 0
+    for (const [code, count] of counts) {
+      if (count > bestCount || (count === bestCount && code < best)) {
+        best = code
+        bestCount = count
+      }
+    }
+    return best
   }
 
   private parseCurrent(omData: OMServiceResponse | undefined): WeatherData[] {
@@ -448,7 +643,10 @@ export class OpenMeteo {
     return data
   }
 
-  private parseForecasts(omData: OMServiceResponse | undefined): WeatherData[] {
+  private parseForecasts(
+    omData: OMServiceResponse | undefined,
+    hourlyForBlending?: OMServiceResponse['hourly']
+  ): WeatherData[] {
     const data: WeatherData[] = []
     if (omData && omData.hourly?.time && Array.isArray(omData.hourly.time)) {
       const forecasts = omData.hourly
@@ -503,21 +701,28 @@ export class OpenMeteo {
     }
     if (omData && omData.daily?.time && Array.isArray(omData.daily.time)) {
       const forecasts = omData.daily
+      // See fetchForecasts()'s own comment: prefer the full-day mode code
+      // over Open-Meteo's own (gloomier) daily aggregate whenever the
+      // hourly series needed to compute it was actually available.
+      const dailyCodes = hourlyForBlending
+        ? this.computeDailyModeCodes(forecasts, hourlyForBlending)
+        : forecasts.weather_code
       for (let i = 0; i < forecasts.time.length; ++i) {
+        const outside: DailyOutsideWithRainChance = {
+          minTemperature:
+            Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
+          maxTemperature:
+            Convert.celciusToKelvin(forecasts.temperature_2m_max[i]) ?? null,
+          uvIndex: forecasts.uv_index_max[i] ?? null,
+          precipitationProbability:
+            forecasts.precipitation_probability_max?.[i] ?? undefined
+        }
         const forecast: WeatherData = {
           date: new Date(Convert.fromUnixTime(forecasts.time[i])).toISOString(),
           type: 'daily',
           description:
-            forecasts.weather_code[i] !== undefined
-              ? WMO_CODE[forecasts.weather_code[i]] ?? ''
-              : '',
-          outside: {
-            minTemperature:
-              Convert.celciusToKelvin(forecasts.temperature_2m_min[i]) ?? null,
-            maxTemperature:
-              Convert.celciusToKelvin(forecasts.temperature_2m_max[i]) ?? null,
-            uvIndex: forecasts.uv_index_max[i] ?? null
-          },
+            dailyCodes[i] !== undefined ? WMO_CODE[dailyCodes[i]] ?? '' : '',
+          outside,
           wind: {
             speedTrue: forecasts.wind_speed_10m_max[i] ?? null,
             directionTrue:
