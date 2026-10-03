@@ -175,6 +175,20 @@ export class OpenMeteo {
   private precision = 5 // geohash precision (5x5 km)
   private cache: Map<string, CacheEntry> = new Map()
   private cacheTTL: number // milliseconds
+  // Requests for a key that is already being fetched wait for that fetch
+  // instead of starting another one (a plotter's wind grid, or several
+  // devices asking at once, would otherwise each reach Open-Meteo).
+  private inflight: Map<string, Promise<OMServiceResponse | undefined>> =
+    new Map()
+  // After a 429 Open-Meteo is not asked again until pausedUntil. Each
+  // consecutive 429 doubles the pause, from MIN_PAUSE_MS up to MAX_PAUSE_MS;
+  // a successful response resets it. Meanwhile requests are answered from
+  // the cache, including entries up to STALE_MS old.
+  private pausedUntil = 0
+  private pauseMs = 0
+  static readonly MIN_PAUSE_MS = 60 * 1000
+  static readonly MAX_PAUSE_MS = 60 * 60 * 1000
+  static readonly STALE_MS = 2 * 60 * 60 * 1000
 
   constructor(config: WEATHER_CONFIG) {
     this.settings = config
@@ -199,10 +213,54 @@ export class OpenMeteo {
     if (entry && Date.now() - entry.timestamp < this.cacheTTL) {
       return entry.data
     }
-    if (entry) {
-      this.cache.delete(key) // expired
+    if (entry && Date.now() - entry.timestamp >= this.staleLimit()) {
+      this.cache.delete(key) // too old even as a fallback
     }
     return null
+  }
+
+  private staleLimit(): number {
+    return Math.max(this.cacheTTL, OpenMeteo.STALE_MS)
+  }
+
+  /** An expired entry still young enough to answer with while Open-Meteo
+   *  is failing or paused. */
+  private getStale(key: string): OMServiceResponse | undefined {
+    const entry = this.cache.get(key)
+    return entry && Date.now() - entry.timestamp < this.staleLimit()
+      ? entry.data
+      : undefined
+  }
+
+  /** Cached data for key, or the result of load(), fetched once however
+   *  many requests ask for it at the same time. If load() fails, or
+   *  Open-Meteo is paused after a 429, a stale entry is returned instead. */
+  private getOrFetch(
+    key: string,
+    load: () => Promise<OMServiceResponse | undefined>
+  ): Promise<OMServiceResponse | undefined> {
+    const cached = this.getFromCache(key)
+    if (cached) {
+      return Promise.resolve(cached)
+    }
+    if (Date.now() < this.pausedUntil) {
+      return Promise.resolve(this.getStale(key))
+    }
+    const pending = this.inflight.get(key)
+    if (pending) {
+      return pending
+    }
+    const request = load()
+      .then((data) => {
+        if (data) {
+          this.setCache(key, data)
+          return data
+        }
+        return this.getStale(key)
+      })
+      .finally(() => this.inflight.delete(key))
+    this.inflight.set(key, request)
+    return request
   }
 
   private setCache(key: string, data: OMServiceResponse): void {
@@ -331,6 +389,19 @@ export class OpenMeteo {
     try {
       const res = await fetch(url)
       const data = await res.json()
+      if (res.status === 429) {
+        this.pauseMs = Math.min(
+          Math.max(OpenMeteo.MIN_PAUSE_MS, this.pauseMs * 2),
+          OpenMeteo.MAX_PAUSE_MS
+        )
+        this.pausedUntil = Date.now() + this.pauseMs
+        console.log(
+          `** open-meteo rate limited (${
+            (data as { reason?: string }).reason ?? '429'
+          }), pausing requests for ${this.pauseMs / 60000} min`
+        )
+        return undefined
+      }
       // Open-Meteo signals failures (e.g. rate limiting) with an error body.
       if (!res.ok || (data as { error?: boolean }).error) {
         console.log(
@@ -340,6 +411,7 @@ export class OpenMeteo {
         )
         return undefined
       }
+      this.pauseMs = 0
       return data as OMServiceResponse
     } catch (err) {
       console.log('** open-meteo fetch error!', err)
@@ -358,16 +430,9 @@ export class OpenMeteo {
   ): Promise<WeatherData[]> => {
     try {
       const cacheKey = this.getCacheKey(position, 'current', options?.maxCount)
-      const cached = this.getFromCache(cacheKey)
-      if (cached) {
-        return this.parseCurrent(cached)
-      }
-
-      const url = this.getUrl(position, 'current', options)
-      const wData = await this.fetchFromService(url)
-      if (wData) {
-        this.setCache(cacheKey, wData)
-      }
+      const wData = await this.getOrFetch(cacheKey, () =>
+        this.fetchFromService(this.getUrl(position, 'current', options))
+      )
       return this.parseCurrent(wData)
     } catch {
       throw new Error(`fetching / parsing weather data!`)
@@ -388,12 +453,9 @@ export class OpenMeteo {
     const omType = type === 'point' ? 'hourly' : 'daily'
     try {
       const cacheKey = this.getCacheKey(position, omType, options?.maxCount)
-      let wData: OMServiceResponse | undefined =
-        this.getFromCache(cacheKey) ?? undefined
-
-      if (!wData) {
+      const wData = await this.getOrFetch(cacheKey, async () => {
         const url = this.getUrl(position, omType, options)
-        wData = await this.fetchFromService(url)
+        const wData = await this.fetchFromService(url)
 
         // Open-Meteo serves waves / swell from a separate marine API, so merge the
         // marine hourly series into the forecast response and parseForecasts can
@@ -415,11 +477,8 @@ export class OpenMeteo {
             console.log('** open-meteo marine fetch error!', err)
           }
         }
-
-        if (wData) {
-          this.setCache(cacheKey, wData)
-        }
-      }
+        return wData
+      })
 
       // Open-Meteo's own daily.weather_code is a "worst hour of the day
       // wins" aggregate -- confirmed against live data to be persistently
@@ -459,16 +518,11 @@ export class OpenMeteo {
     hours: number
   ): Promise<OMServiceResponse | undefined> => {
     const cacheKey = this.getCacheKey(position, 'hourly', hours)
-    const cached = this.getFromCache(cacheKey)
-    if (cached) {
-      return cached
-    }
-    const url = this.getUrl(position, 'hourly', { maxCount: hours })
-    const wData = await this.fetchFromService(url)
-    if (wData) {
-      this.setCache(cacheKey, wData)
-    }
-    return wData
+    return this.getOrFetch(cacheKey, () =>
+      this.fetchFromService(
+        this.getUrl(position, 'hourly', { maxCount: hours })
+      )
+    )
   }
 
   // A precip-type WMO code present for less than this many *consecutive*
