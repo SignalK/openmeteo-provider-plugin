@@ -1,6 +1,6 @@
 {
   "name": "@signalk/open-meteo-provider",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Open-Meteo weather provider plugin for Signal K Server",
   "main": "plugin/index.js",
   "signalk": {
