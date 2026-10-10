@@ -488,23 +488,22 @@ export class OpenMeteo {
   // handled separately below and always wins the day regardless of how
   // many hours it covers, same as most weather apps treat storms as
   // always-notable rather than duration-gated.
-  private static readonly CONTINUOUS_TO_SHOWERS_CODE: Record<number, number> =
-    {
-      51: 80, // Drizzle: Light -> Rain showers: Slight
-      53: 80, // Drizzle: Moderate -> Rain showers: Slight
-      55: 81, // Drizzle: Dense intensity -> Rain showers: Moderate
-      56: 80, // Freezing Drizzle: Light -> Rain showers: Slight
-      57: 81, // Freezing Drizzle: Dense intensity -> Rain showers: Moderate
-      61: 80, // Rain: Slight -> Rain showers: Slight
-      63: 81, // Rain: Moderate -> Rain showers: Moderate
-      65: 82, // Rain: Heavy intensity -> Rain showers: Violent
-      66: 80, // Freezing Rain: Light -> Rain showers: Slight
-      67: 82, // Freezing Rain: Heavy intensity -> Rain showers: Violent
-      71: 85, // Snow fall: Slight -> Snow showers: Slight
-      73: 85, // Snow fall: Moderate -> Snow showers: Slight
-      75: 86, // Snow fall: Heavy intensity -> Snow showers: Heavy
-      77: 85 // Snow grains -> Snow showers: Slight
-    }
+  private static readonly CONTINUOUS_TO_SHOWERS_CODE: Record<number, number> = {
+    51: 80, // Drizzle: Light -> Rain showers: Slight
+    53: 80, // Drizzle: Moderate -> Rain showers: Slight
+    55: 81, // Drizzle: Dense intensity -> Rain showers: Moderate
+    56: 80, // Freezing Drizzle: Light -> Rain showers: Slight
+    57: 81, // Freezing Drizzle: Dense intensity -> Rain showers: Moderate
+    61: 80, // Rain: Slight -> Rain showers: Slight
+    63: 81, // Rain: Moderate -> Rain showers: Moderate
+    65: 82, // Rain: Heavy intensity -> Rain showers: Violent
+    66: 80, // Freezing Rain: Light -> Rain showers: Slight
+    67: 82, // Freezing Rain: Heavy intensity -> Rain showers: Violent
+    71: 85, // Snow fall: Slight -> Snow showers: Slight
+    73: 85, // Snow fall: Moderate -> Snow showers: Slight
+    75: 86, // Snow fall: Heavy intensity -> Snow showers: Heavy
+    77: 85 // Snow grains -> Snow showers: Slight
+  }
 
   private isPrecipCode(code: number): boolean {
     return (
@@ -572,8 +571,7 @@ export class OpenMeteo {
       const representative = this.modeWeatherCode(precipCodes)
       return longestPrecipRun >= OpenMeteo.CONTINUOUS_PRECIP_RUN_HOURS
         ? representative
-        : OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE[representative] ??
-            representative
+        : OpenMeteo.CONTINUOUS_TO_SHOWERS_CODE[representative] ?? representative
     })
   }
 
